@@ -37,6 +37,14 @@ max_foto = 8
 max_analisi_al_giorno = 200
 # Ricerche web massime per identificare un codice
 ricerche_web_per_codice = 3
+# Prezzi in dollari usati per calcolare il costo nel log (default: Claude Haiku 5.5).
+# Se cambi modello aggiornali con quelli della pagina prezzi di Anthropic.
+prezzo_input_mtok = 0.10          # per milione di token in input
+prezzo_output_mtok = 0.50         # per milione di token in output
+prezzo_ricerca_web = 0.01         # per ricerca
+soglia_prompt_lungo = 100000      # oltre questa soglia di input, una richiesta Haiku 5.5 costa di più:
+prezzo_input_mtok_lungo = 0.50
+prezzo_output_mtok_lungo = 2.50
 
 [telegram]
 # true = avviso subito appena esce l'annuncio, poi la risposta con l'esito

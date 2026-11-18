@@ -95,8 +95,25 @@ Con `-v` (`python main.py -v avvia`) il log diventa dettagliato, comprese le ric
 ```powershell
 python main.py lista                    # maglie con etichetta OK
 python main.py lista --tutti            # anche dubbie e negative
-python main.py lista --csv maglie.csv   # esporta (si apre con Excel)
+python main.py lista --csv maglie.csv   # esporta (si apre con Excel), con il costo di ogni analisi
 ```
+
+## Costi
+
+Ogni analisi scrive nel log quanto è costata e il totale del giorno:
+
+```
+14:32:10 INFO    analizzatore Esito 4567: corrisponde CV8413-101 · 21.840 in / 612 out · 2 ricerche web · $0.0225 (oggi $0.3140) · ...
+```
+
+```powershell
+python main.py costi              # spesa per giorno, ultimi 7 giorni
+python main.py costi --giorni 30
+```
+
+Vengono contati anche i tentativi falliti, perché i token si pagano lo stesso. Il costo è calcolato
+con i prezzi in `config.toml` (default: Haiku 5.5). È una stima: il dato ufficiale è nella Console Anthropic.
+La ricerca su Vinted non costa nulla: si paga solo l'analisi degli annunci nuovi.
 
 ## Esiti
 
@@ -122,7 +139,7 @@ python main.py lista --csv maglie.csv   # esporta (si apre con Excel)
 ## Struttura
 
 ```
-main.py              comandi (avvia, prova-ricerca, prova-annuncio, lista, telegram-chat-id)
+main.py              comandi (avvia, prova-ricerca, prova-annuncio, lista, costi, telegram-chat-id)
 maglie/config.py     config.toml + .env
 maglie/vinted.py     tutto ciò che tocca Vinted (ricerca, pagina annuncio, foto)
 maglie/servizio.py   scanner e analizzatore (thread), jitter e backoff

@@ -5,6 +5,7 @@ import time
 
 import pytest
 
+from maglie.ai import Consumo
 from maglie.config import Config, Ricerca
 from maglie.db import Archivio
 from maglie.servizio import Analizzatore, Scanner, attesa_backoff
@@ -61,18 +62,35 @@ class AIFinta:
                                      "fonti": ["https://esempio.it/cv8413"]}
         self.verdetto = verdetto or {"esito": "corrisponde", "taglia_coerente": True, "motivo": "tutto coerente"}
         self.chiamate = {"leggi": 0, "cerca": 0, "confronta": 0}
+        self.consumo = Consumo()
+        self.errore_lettura = None
+
+    def prendi_consumo(self):
+        c, self.consumo = self.consumo, Consumo()
+        return c
+
+    def _spendi(self, t_in, t_out, ricerche):
+        self.consumo.token_in += t_in
+        self.consumo.token_out += t_out
+        self.consumo.ricerche_web += ricerche
+        self.consumo.costo += t_in / 1e6 * 0.10 + t_out / 1e6 * 0.50 + ricerche * 0.01
 
     def leggi_etichetta(self, foto, annuncio):
         self.chiamate["leggi"] += 1
+        self._spendi(8000, 300, 0)
+        if self.errore_lettura:
+            raise self.errore_lettura
         self.ultime_foto = foto
         return dict(self.lettura)
 
     def cerca_codice(self, codice, upc, marca):
         self.chiamate["cerca"] += 1
+        self._spendi(20000, 500, 2)
         return dict(self.prodotto)
 
     def confronta(self, annuncio, lettura, prodotto):
         self.chiamate["confronta"] += 1
+        self._spendi(1500, 200, 0)
         self.ultimo_annuncio = annuncio
         return dict(self.verdetto)
 
@@ -232,3 +250,37 @@ def test_limite_giornaliero(ambiente):
     an.elabora(archivio, archivio.prossimo_in_coda())
     assert archivio.annuncio(10)["stato"] == "saltato"
     assert ai.chiamate["leggi"] == 0
+
+
+def test_consumo_registrato_per_ogni_analisi(ambiente):
+    archivio = ambiente[5]
+    an = _analizzatore(ambiente, AIFinta())
+    an.elabora(archivio, archivio.prossimo_in_coda())
+    righe = archivio.conn.execute("SELECT * FROM consumi").fetchall()
+    assert len(righe) == 1
+    r = righe[0]
+    assert (r["id_annuncio"], r["token_in"], r["token_out"], r["ricerche_web"]) == (10, 29500, 1000, 2)
+    assert r["costo"] == pytest.approx(29500 / 1e6 * 0.10 + 1000 / 1e6 * 0.50 + 0.02)
+    assert archivio.costo_oggi() == pytest.approx(r["costo"])
+    assert archivio.lista()[0]["costo_usd"] == pytest.approx(r["costo"])
+
+
+def test_consumo_registrato_anche_se_l_analisi_fallisce(ambiente):
+    _, _, _, stop, *_ = ambiente
+    archivio = ambiente[5]
+    ai = AIFinta()
+    ai.errore_lettura = RuntimeError("API giù")
+    an = _analizzatore(ambiente, ai)
+    stop.set()
+    an.elabora(archivio, archivio.prossimo_in_coda())
+    r = archivio.conn.execute("SELECT * FROM consumi").fetchone()
+    assert r["token_in"] == 8000 and archivio.annuncio(10)["stato"] == "in_coda"
+
+
+def test_nessun_consumo_se_salta_per_limite(ambiente):
+    cfg, *_ = ambiente
+    archivio = ambiente[5]
+    cfg.analisi.max_analisi_al_giorno = 0
+    an = _analizzatore(ambiente, AIFinta())
+    an.elabora(archivio, archivio.prossimo_in_coda())
+    assert archivio.conn.execute("SELECT COUNT(*) AS n FROM consumi").fetchone()["n"] == 0

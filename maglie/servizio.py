@@ -123,8 +123,17 @@ class Analizzatore:
     def _rispondi(self, riga, testo: str) -> None:
         self.telegram.invia(testo, in_risposta_a=riga["tg_message_id"])
 
+    def _registra_consumo(self, archivio: Archivio, id_annuncio: int) -> str:
+        """Salva i token usati in questo tentativo e restituisce la riga per il log."""
+        c = self.ai.prendi_consumo()
+        if not c:
+            return "nessun consumo API"
+        archivio.registra_consumo(id_annuncio, c.token_in, c.token_out, c.ricerche_web, c.costo)
+        return f"{c} (oggi ${archivio.costo_oggi():.4f})"
+
     def elabora(self, archivio: Archivio, riga) -> None:
         annuncio = dict(riga)
+        self.ai.prendi_consumo()  # azzera eventuali residui
         if archivio.analisi_oggi() >= self.cfg.analisi.max_analisi_al_giorno:
             archivio.segna_saltato(riga["id"], "limite giornaliero di analisi raggiunto")
             self._rispondi(riga, "⏸ Limite giornaliero di analisi raggiunto: questa non la controllo.")
@@ -134,14 +143,16 @@ class Analizzatore:
             risultato = analizza_annuncio(annuncio, foto, self.ai, archivio)
         except VintedErrore as ex:
             n = archivio.segna_tentativo_fallito(riga["id"], str(ex), MAX_TENTATIVI_ANALISI)
-            log.warning("Analisi %s: Vinted %s (tentativo %d)", riga["id"], ex, n)
+            log.warning("Analisi %s: Vinted %s (tentativo %d) · %s", riga["id"], ex, n,
+                        self._registra_consumo(archivio, riga["id"]))
             if n >= MAX_TENTATIVI_ANALISI:
                 self._rispondi(riga, f"❌ Non riesco ad aprire l'annuncio ({e(ex)}). Controllalo a mano.")
             self.stop.wait(300 if ex.bloccato else 30)
             return
         except Exception as ex:  # errori API, rete, ecc.
             n = archivio.segna_tentativo_fallito(riga["id"], repr(ex), MAX_TENTATIVI_ANALISI)
-            log.exception("Analisi %s fallita (tentativo %d)", riga["id"], n)
+            log.exception("Analisi %s fallita (tentativo %d) · %s", riga["id"], n,
+                          self._registra_consumo(archivio, riga["id"]))
             if n >= MAX_TENTATIVI_ANALISI:
                 self._rispondi(riga, f"❌ Analisi non riuscita: {e(ex)}")
             self.stop.wait(30)
@@ -152,7 +163,8 @@ class Analizzatore:
             taglia_etichetta=risultato.taglia_etichetta, prodotto=risultato.nome_prodotto or None,
             motivo=risultato.motivo,
         )
-        log.info("Esito %s: %s %s %s", riga["id"], risultato.esito, risultato.codice_stile or "", risultato.motivo)
+        log.info("Esito %s: %s %s · %s · %s", riga["id"], risultato.esito, risultato.codice_stile or "",
+                 self._registra_consumo(archivio, riga["id"]), risultato.motivo)
         self._rispondi(riga, messaggio_esito(risultato, annuncio, con_intestazione_annuncio=not riga["tg_message_id"]))
 
     def esegui(self) -> None:

@@ -38,6 +38,13 @@ class AnalisiConfig:
     max_foto: int = 8
     max_analisi_al_giorno: int = 200
     ricerche_web_per_codice: int = 3
+    # Prezzi in dollari (default: Claude Haiku 5.5). Se cambi modello, aggiornali.
+    prezzo_input_mtok: float = 0.10
+    prezzo_output_mtok: float = 0.50
+    prezzo_ricerca_web: float = 0.01
+    soglia_prompt_lungo: int = 100_000
+    prezzo_input_mtok_lungo: float = 0.50
+    prezzo_output_mtok_lungo: float = 2.50
 
 
 @dataclass

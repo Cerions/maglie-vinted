@@ -93,3 +93,19 @@ def test_normalizza_annuncio():
     a = normalizza_annuncio(raw, "https://www.vinted.it")
     assert a["id"] == 123 and a["prezzo"] == "25.0 EUR" and a["timestamp"] == 1700000000
     assert normalizza_annuncio({"id": 5}, "https://www.vinted.it")["url"] == "https://www.vinted.it/items/5"
+
+
+def test_comando_costi(tmp_path, monkeypatch, capsys):
+    import main
+    from maglie.db import Archivio
+
+    monkeypatch.chdir(tmp_path)
+    assert main.main(["costi"]) == 0
+    assert "Nessun consumo" in capsys.readouterr().out
+    a = Archivio("maglie.db")
+    a.registra_consumo(1, 9000, 300, 0, 0.00105)
+    a.registra_consumo(2, 30000, 900, 2, 0.02345)
+    a.chiudi()
+    assert main.main(["costi"]) == 0
+    out = capsys.readouterr().out
+    assert "39.000" in out and "0.0245" in out

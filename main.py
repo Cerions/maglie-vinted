@@ -6,6 +6,7 @@ Comandi:
   python main.py prova-annuncio URL_O_ID [--ai]
   python main.py telegram-chat-id
   python main.py lista [--tutti] [--csv FILE]
+  python main.py costi [--giorni N]
 """
 
 from __future__ import annotations
@@ -42,6 +43,15 @@ def configura_log(cfg: Config, verboso: bool = False) -> None:
         logging.getLogger(rumoroso).setLevel(logging.DEBUG if verboso else logging.WARNING)
 
 
+def crea_ai(cfg: Config):
+    from maglie.ai import AnalistaAI, Prezzi
+
+    a = cfg.analisi
+    prezzi = Prezzi(a.prezzo_input_mtok, a.prezzo_output_mtok, a.prezzo_ricerca_web,
+                    a.soglia_prompt_lungo, a.prezzo_input_mtok_lungo, a.prezzo_output_mtok_lungo)
+    return AnalistaAI(cfg.anthropic_api_key, a.modello, a.ricerche_web_per_codice, prezzi)
+
+
 def aggiungi_ricerche(cfg: Config, extra: list[str] | None) -> None:
     for r in extra or []:
         nome = r if not r.startswith("http") else f"ricerca {len(cfg.ricerche) + 1}"
@@ -51,14 +61,13 @@ def aggiungi_ricerche(cfg: Config, extra: list[str] | None) -> None:
 # --- comandi ----------------------------------------------------------------
 
 def cmd_avvia(cfg: Config, args) -> int:
-    from maglie.ai import AnalistaAI
     from maglie.servizio import Analizzatore, Scanner
 
     aggiungi_ricerche(cfg, args.ricerca)
     if not cfg.ricerche:
         print("Nessuna ricerca: aggiungila in config.toml o con --ricerca \"URL o testo\"")
         return 1
-    ai = AnalistaAI(cfg.anthropic_api_key, cfg.analisi.modello, cfg.analisi.ricerche_web_per_codice)
+    ai = crea_ai(cfg)
     telegram = Telegram(cfg.telegram.bot_token, cfg.telegram.chat_id)
     if not telegram.attivo:
         log.warning("Telegram non configurato: gli avvisi finiscono solo nel log")
@@ -138,19 +147,25 @@ def cmd_prova_annuncio(cfg: Config, args) -> int:
     if not args.ai:
         return 0
 
-    from maglie.ai import AnalistaAI
     from maglie.analisi import analizza_annuncio, raccogli_foto
 
-    ai = AnalistaAI(cfg.anthropic_api_key, cfg.analisi.modello, cfg.analisi.ricerche_web_per_codice)
+    ai = crea_ai(cfg)
     titolo = re.search(r'property="og:title"[^>]+content="([^"]*)"', pagina)
     annuncio = {"id": id_annuncio, "titolo": titolo.group(1) if titolo else "", "marca": "", "taglia": "",
                 "url": f"{cfg.vinted.dominio}/items/{id_annuncio}", "foto_principale": ""}
     archivio = Archivio(cfg.percorso_db)
     immagini = raccogli_foto(client, annuncio, cfg.analisi.max_foto)
-    r = analizza_annuncio(annuncio, immagini, ai, archivio)
+    try:
+        r = analizza_annuncio(annuncio, immagini, ai, archivio)
+    finally:
+        consumo = ai.prendi_consumo()
+        if consumo:
+            archivio.registra_consumo(id_annuncio, consumo.token_in, consumo.token_out,
+                                      consumo.ricerche_web, consumo.costo)
     print(f"\nLettura etichetta: {r.lettura}")
     print(f"Prodotto: {r.prodotto}")
     print(f"\nESITO: {r.esito}\n{r.motivo}")
+    print(f"\nConsumo: {consumo}")
     return 0
 
 
@@ -173,18 +188,35 @@ def cmd_lista(cfg: Config, args) -> int:
     archivio = Archivio(cfg.percorso_db)
     esiti = ("corrisponde", "incerto", "non_corrisponde", "codice_non_trovato", "codice_anomalo") if args.tutti else ("corrisponde",)
     righe = archivio.lista(esiti)
-    colonne = ["analizzato_il", "esito", "titolo", "prezzo", "taglia", "codice_stile", "upc", "prodotto", "url", "motivo"]
+    colonne = ["analizzato_il", "esito", "titolo", "prezzo", "taglia", "codice_stile", "upc", "prodotto", "url",
+               "motivo", "costo_usd"]
     if args.csv:
         with open(args.csv, "w", newline="", encoding="utf-8-sig") as f:  # utf-8-sig: Excel lo apre bene
             w = csv.writer(f, delimiter=";")
             w.writerow(colonne)
             for r in righe:
-                w.writerow([r[c] for c in colonne])
+                w.writerow([f"{r[c]:.4f}".replace(".", ",") if c == "costo_usd" else r[c] for c in colonne])
         print(f"{len(righe)} righe salvate in {args.csv}")
     else:
         for r in righe:
             print(f"[{r['esito']}] {r['titolo']} · {r['prezzo']} · {r['codice_stile']} · {r['url']}")
         print(f"({len(righe)} maglie)")
+    return 0
+
+
+def cmd_costi(cfg: Config, args) -> int:
+    archivio = Archivio(cfg.percorso_db)
+    righe = archivio.consumi_per_giorno(args.giorni)
+    if not righe:
+        print("Nessun consumo registrato")
+        return 0
+    print(f"{'giorno':10}  {'annunci':>7}  {'token in':>10}  {'token out':>9}  {'ricerche':>8}  {'costo $':>9}")
+    totale = 0.0
+    for r in righe:
+        totale += r["costo"]
+        print(f"{r['giorno']:10}  {r['annunci']:>7}  {r['token_in']:>10,}  {r['token_out']:>9,}  "
+              f"{r['ricerche_web']:>8}  {r['costo']:>9.4f}".replace(",", "."))
+    print(f"\nTotale ultimi {len(righe)} giorni: ${totale:.4f}")
     return 0
 
 
@@ -205,6 +237,8 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("lista", help="Mostra le maglie con etichetta OK")
     s.add_argument("--tutti", action="store_true", help="Include anche gli esiti dubbi e negativi")
     s.add_argument("--csv", help="Esporta in CSV")
+    s = sub.add_parser("costi", help="Spesa API per giorno")
+    s.add_argument("--giorni", type=int, default=7)
 
     args = p.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):  # console Windows: niente crash su emoji/accenti
@@ -213,7 +247,7 @@ def main(argv: list[str] | None = None) -> int:
     configura_log(cfg, args.verboso)
     comandi = {
         "avvia": cmd_avvia, "prova-ricerca": cmd_prova_ricerca, "prova-annuncio": cmd_prova_annuncio,
-        "telegram-chat-id": cmd_telegram_chat_id, "lista": cmd_lista,
+        "telegram-chat-id": cmd_telegram_chat_id, "lista": cmd_lista, "costi": cmd_costi,
     }
     return comandi[args.comando](cfg, args)
 

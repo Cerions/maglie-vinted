@@ -8,10 +8,45 @@ from __future__ import annotations
 
 import base64
 import logging
+from dataclasses import dataclass
 
 import anthropic
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class Prezzi:
+    """Prezzi in dollari. I default sono quelli di Claude Haiku 5.5: se cambi modello, aggiornali in config.toml."""
+    input_mtok: float = 0.10
+    output_mtok: float = 0.50
+    ricerca_web: float = 0.01
+    # Haiku 5.5 costa di più se il prompt di una singola richiesta supera questa soglia
+    soglia_prompt_lungo: int = 100_000
+    input_mtok_lungo: float = 0.50
+    output_mtok_lungo: float = 2.50
+
+
+@dataclass
+class Consumo:
+    token_in: int = 0
+    token_out: int = 0
+    ricerche_web: int = 0
+    costo: float = 0.0
+
+    def __bool__(self) -> bool:
+        return bool(self.token_in or self.token_out or self.ricerche_web)
+
+    def __str__(self) -> str:
+        return (f"{self.token_in:,} in / {self.token_out:,} out · {self.ricerche_web} ricerche web · "
+                f"${self.costo:.4f}").replace(",", ".")
+
+
+def costo_richiesta(prezzi: Prezzi, token_in: int, token_out: int, ricerche_web: int) -> float:
+    lungo = token_in > prezzi.soglia_prompt_lungo
+    p_in = prezzi.input_mtok_lungo if lungo else prezzi.input_mtok
+    p_out = prezzi.output_mtok_lungo if lungo else prezzi.output_mtok
+    return token_in / 1e6 * p_in + token_out / 1e6 * p_out + ricerche_web * prezzi.ricerca_web
 
 TOOL_ETICHETTA = {
     "name": "riporta_etichetta",
@@ -78,12 +113,34 @@ def _tool_input(risposta, nome: str) -> dict | None:
 
 
 class AnalistaAI:
-    def __init__(self, api_key: str, modello: str, ricerche_web: int = 3):
+    def __init__(self, api_key: str, modello: str, ricerche_web: int = 3, prezzi: Prezzi | None = None):
         if not api_key:
             raise ValueError("Manca ANTHROPIC_API_KEY nel file .env")
         self.client = anthropic.Anthropic(api_key=api_key, max_retries=3)
         self.modello = modello
         self.ricerche_web = ricerche_web
+        self.prezzi = prezzi or Prezzi()
+        self.consumo = Consumo()
+
+    def prendi_consumo(self) -> Consumo:
+        """Restituisce il consumo accumulato dall'ultima chiamata a questo metodo e lo azzera."""
+        c, self.consumo = self.consumo, Consumo()
+        return c
+
+    def _crea(self, **kwargs):
+        r = self.client.messages.create(**kwargs)
+        uso = getattr(r, "usage", None)
+        if uso is not None:
+            t_in = (getattr(uso, "input_tokens", 0) or 0) + (getattr(uso, "cache_creation_input_tokens", 0) or 0) \
+                + (getattr(uso, "cache_read_input_tokens", 0) or 0)
+            t_out = getattr(uso, "output_tokens", 0) or 0
+            server = getattr(uso, "server_tool_use", None)
+            ricerche = (getattr(server, "web_search_requests", 0) or 0) if server is not None else 0
+            self.consumo.token_in += t_in
+            self.consumo.token_out += t_out
+            self.consumo.ricerche_web += ricerche
+            self.consumo.costo += costo_richiesta(self.prezzi, t_in, t_out, ricerche)
+        return r
 
     # 1) Vision: trova l'etichetta e leggi i codici --------------------------
     def leggi_etichetta(self, foto: list[tuple[bytes, str]], annuncio: dict) -> dict:
@@ -101,7 +158,7 @@ class AnalistaAI:
             "di indovinare. Non confondere l'etichetta di composizione/lavaggio con quella dei codici. "
             "Descrivi anche la maglia mostrata nelle altre foto."
         )})
-        r = self.client.messages.create(
+        r = self._crea(
             model=self.modello, max_tokens=1024, tools=[TOOL_ETICHETTA],
             tool_choice={"type": "tool", "name": "riporta_etichetta"},
             messages=[{"role": "user", "content": contenuto}],
@@ -127,7 +184,7 @@ class AnalistaAI:
         ]
         for tentativo in range(5):
             forza = tentativo >= 3
-            r = self.client.messages.create(
+            r = self._crea(
                 model=self.modello, max_tokens=2048, tools=strumenti, messages=messaggi,
                 tool_choice={"type": "tool", "name": "riporta_prodotto"} if forza else {"type": "auto"},
             )
@@ -153,7 +210,7 @@ class AnalistaAI:
             "maglia (altra squadra, altra stagione, altro kit o colore). 'incerto' = dati insufficienti. "
             "Controlla anche che taglia etichetta, taglia annuncio ed eventuale taglia da UPC siano coerenti."
         )
-        r = self.client.messages.create(
+        r = self._crea(
             model=self.modello, max_tokens=512, tools=[TOOL_VERDETTO],
             tool_choice={"type": "tool", "name": "riporta_verdetto"},
             messages=[{"role": "user", "content": testo}],

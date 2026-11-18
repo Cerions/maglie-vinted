@@ -44,6 +44,17 @@ CREATE TABLE IF NOT EXISTS ricerche_inizializzate (
     il     TEXT
 );
 
+-- un record per ogni tentativo di analisi (anche quelli falliti: i token li paghi lo stesso)
+CREATE TABLE IF NOT EXISTS consumi (
+    id_annuncio  INTEGER,
+    il           TEXT,
+    token_in     INTEGER,
+    token_out    INTEGER,
+    ricerche_web INTEGER,
+    costo        REAL
+);
+CREATE INDEX IF NOT EXISTS idx_consumi_il ON consumi(il);
+
 CREATE TABLE IF NOT EXISTS cache_codici (
     chiave   TEXT PRIMARY KEY,
     risultato TEXT,
@@ -139,7 +150,28 @@ class Archivio:
     def lista(self, esiti: tuple[str, ...] = ESITI_LISTA) -> list[sqlite3.Row]:
         segnaposto = ",".join("?" * len(esiti))
         return self.conn.execute(
-            f"SELECT * FROM annunci WHERE esito IN ({segnaposto}) ORDER BY analizzato_il DESC", esiti
+            f"""SELECT a.*, COALESCE((SELECT SUM(c.costo) FROM consumi c WHERE c.id_annuncio = a.id), 0) AS costo_usd
+                FROM annunci a WHERE a.esito IN ({segnaposto}) ORDER BY a.analizzato_il DESC""", esiti
+        ).fetchall()
+
+    # --- consumi ------------------------------------------------------------
+    def registra_consumo(self, id_annuncio: int | None, token_in: int, token_out: int,
+                         ricerche_web: int, costo: float) -> None:
+        self.conn.execute("INSERT INTO consumi VALUES (?,?,?,?,?,?)",
+                          (id_annuncio, adesso(), token_in, token_out, ricerche_web, costo))
+        self.conn.commit()
+
+    def costo_oggi(self) -> float:
+        oggi = datetime.now(timezone.utc).date().isoformat()
+        r = self.conn.execute("SELECT COALESCE(SUM(costo), 0) AS t FROM consumi WHERE il LIKE ?", (oggi + "%",)).fetchone()
+        return r["t"]
+
+    def consumi_per_giorno(self, giorni: int = 7) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            """SELECT substr(il, 1, 10) AS giorno, COUNT(DISTINCT id_annuncio) AS annunci,
+                      SUM(token_in) AS token_in, SUM(token_out) AS token_out,
+                      SUM(ricerche_web) AS ricerche_web, SUM(costo) AS costo
+               FROM consumi GROUP BY giorno ORDER BY giorno DESC LIMIT ?""", (giorni,)
         ).fetchall()
 
     # --- cache codici -------------------------------------------------------

@@ -2,7 +2,9 @@
 
 from types import SimpleNamespace as NS
 
-from maglie.ai import AnalistaAI
+import pytest
+
+from maglie.ai import AnalistaAI, Prezzi, costo_richiesta
 
 
 class MessaggiFinti:
@@ -64,3 +66,30 @@ def test_cerca_codice_alla_fine_forza_il_tool():
                 [NS(content=[tool("riporta_prodotto", {"trovato": False, "fonti": []})], stop_reason="tool_use")])
     assert ai.cerca_codice("GM4614", None, "adidas") == {"trovato": False, "fonti": []}
     assert ai.client.messages.chiamate[3]["tool_choice"] == {"type": "tool", "name": "riporta_prodotto"}
+
+
+def test_costo_richiesta_e_fascia_prompt_lungo():
+    p = Prezzi()
+    assert costo_richiesta(p, 10_000, 500, 0) == pytest.approx(0.001 + 0.00025)
+    assert costo_richiesta(p, 10_000, 500, 2) == pytest.approx(0.02125)
+    # oltre 100k token in input l'intera richiesta va alla tariffa più alta
+    assert costo_richiesta(p, 150_000, 1_000, 0) == pytest.approx(0.075 + 0.0025)
+
+
+def test_consumo_accumulato_dalle_risposte():
+    uso1 = NS(input_tokens=9000, output_tokens=300, cache_creation_input_tokens=None,
+              cache_read_input_tokens=None, server_tool_use=None)
+    uso2 = NS(input_tokens=20000, output_tokens=400, cache_creation_input_tokens=0,
+              cache_read_input_tokens=0, server_tool_use=NS(web_search_requests=2))
+    ai = ai_con([
+        NS(content=[tool("riporta_etichetta", {"etichetta_trovata": False, "leggibilita": "scarsa",
+                                                "descrizione_maglia": ""})], stop_reason="tool_use", usage=uso1),
+        NS(content=[tool("riporta_prodotto", {"trovato": False, "fonti": []})], stop_reason="tool_use", usage=uso2),
+    ])
+    ai.leggi_etichetta([(b"a", "image/jpeg")], {})
+    ai.cerca_codice("GM4614", None, "adidas")
+    c = ai.prendi_consumo()
+    assert (c.token_in, c.token_out, c.ricerche_web) == (29000, 700, 2)
+    assert c.costo == pytest.approx(costo_richiesta(Prezzi(), 9000, 300, 0) + costo_richiesta(Prezzi(), 20000, 400, 2))
+    assert str(c) == "29.000 in / 700 out · 2 ricerche web · $0.0232"
+    assert not ai.prendi_consumo()  # azzerato
