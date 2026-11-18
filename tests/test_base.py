@@ -141,3 +141,16 @@ def test_comando_telegram_prova(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(main.Telegram, "_chiama", lambda self, metodo, dati: inviati.append((metodo, dati)) or {"message_id": 7})
     assert main.main(["telegram-prova"]) == 0
     assert inviati[0][0] == "sendMessage" and inviati[0][1]["chat_id"] == "42"
+
+
+def test_prova_ricerca_salva_json(tmp_path, monkeypatch, capsys):
+    import json
+
+    import main
+
+    monkeypatch.chdir(tmp_path)
+    grezzo = {"items": [{"id": 1, "title": "Maglia", "price": {"amount": "10.0", "currency_code": "EUR"}}]}
+    monkeypatch.setattr(main.ClientVinted, "cerca_grezzo", lambda self, params: grezzo)
+    assert main.main(["prova-ricerca", "--ricerca", "maglia", "--salva-json", "risposta.json"]) == 0
+    assert json.loads((tmp_path / "risposta.json").read_text(encoding="utf-8")) == grezzo
+    assert "10.0 EUR" in capsys.readouterr().out

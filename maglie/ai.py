@@ -166,7 +166,9 @@ TOOL_PRODOTTO = {
             "fonti": {"type": "array", "items": {"type": "string"}, "description": "URL delle pagine usate."},
             "note": {"type": "string"},
         },
-        "required": ["trovato", "fonti"],
+        # tutti obbligatori (null se non noti): così il modello non può rispondere solo {"trovato": true}
+        "required": ["trovato", "nome_prodotto", "squadra", "stagione", "tipo_kit", "colori", "versione",
+                     "taglia_da_upc", "upc_coerente", "fonti", "note"],
     },
 }
 
@@ -185,11 +187,22 @@ TOOL_VERDETTO = {
 }
 
 
-def _tool_input(risposta, nome: str) -> dict | None:
+def _blocco_tool(risposta, nome: str):
     for blocco in risposta.content:
         if blocco.type == "tool_use" and blocco.name == nome:
-            return dict(blocco.input)
+            return blocco
     return None
+
+
+def _tool_input(risposta, nome: str) -> dict | None:
+    b = _blocco_tool(risposta, nome)
+    return dict(b.input) if b is not None else None
+
+
+def prodotto_completo(p: dict | None) -> bool:
+    """Un risultato "trovato" serve solo se dice almeno squadra, stagione o nome e da dove viene."""
+    return bool(p and p.get("trovato") and p.get("squadra") and (p.get("stagione") or p.get("nome_prodotto"))
+                and p.get("fonti"))
 
 
 class AnalistaAI:
@@ -255,22 +268,39 @@ class AnalistaAI:
               "siti di rivenditori). Riporta squadra, stagione, tipo di kit e colori SOLO se le fonti "
               "lo confermano per quel codice esatto. "
             + ("Se trovi il codice a barre, indica a quale prodotto e taglia è associato. " if upc else "")
-            + "Alla fine chiama sempre riporta_prodotto."
+            + "Alla fine chiama sempre riporta_prodotto compilando TUTTI i campi con quello che hai "
+              "trovato (null solo se davvero sconosciuto) e mettendo in fonti gli URL usati. "
+              "Se le fonti non identificano il prodotto, trovato=false."
         )
         messaggi: list[dict] = [{"role": "user", "content": richiesta}]
         strumenti = [
             {"type": "web_search_20250305", "name": "web_search", "max_uses": self.ricerche_web},
             TOOL_PRODOTTO,
         ]
+        gia_corretto = False
+        forza = False
         for tentativo in range(5):
-            forza = tentativo >= 3
+            forza = forza or tentativo >= 3
             r = self._crea(
                 model=self.modello, max_tokens=2048, tools=strumenti, messages=messaggi,
                 tool_choice={"type": "tool", "name": "riporta_prodotto"} if forza else {"type": "auto"},
             )
-            risultato = _tool_input(r, "riporta_prodotto")
-            if risultato is not None:
-                return risultato
+            blocco = _blocco_tool(r, "riporta_prodotto")
+            if blocco is not None:
+                risultato = dict(blocco.input)
+                if not risultato.get("trovato") or prodotto_completo(risultato) or gia_corretto:
+                    return risultato
+                # "trovato" ma senza dettagli: una sola richiesta di correzione, senza nuove ricerche
+                gia_corretto, forza = True, True
+                log.info("Ricerca codice %s: risposta incompleta, chiedo di completarla", codice)
+                messaggi.append({"role": "assistant", "content": r.content})
+                messaggi.append({"role": "user", "content": [{
+                    "type": "tool_result", "tool_use_id": getattr(blocco, "id", None) or "", "is_error": True,
+                    "content": "Risposta incompleta: compila nome_prodotto, squadra, stagione, tipo_kit, colori e "
+                               "fonti (URL) con quello che hai già trovato nelle ricerche. Se non li conosci, "
+                               "imposta trovato=false.",
+                }]})
+                continue
             messaggi.append({"role": "assistant", "content": r.content})
             if r.stop_reason != "pause_turn":  # ha finito senza chiamare il tool: sollecitiamo
                 messaggi.append({"role": "user", "content": "Ora chiama riporta_prodotto con quello che hai trovato."})

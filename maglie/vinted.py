@@ -180,14 +180,18 @@ class ClientVinted:
         with self._lock:
             self._wrapper = None
 
-    def cerca(self, params: dict) -> list[dict]:
+    def cerca_grezzo(self, params: dict) -> dict:
+        """La risposta JSON della ricerca così come arriva da Vinted."""
         try:
             with self._lock:
-                dati = self._w().search(params)
+                return self._w().search(params)
         except RuntimeError as e:
             raise VintedErrore(str(e), _status_da_messaggio(str(e))) from e
         except httpx.HTTPError as e:
             raise VintedErrore(f"Errore di rete: {e}") from e
+
+    def cerca(self, params: dict) -> list[dict]:
+        dati = self.cerca_grezzo(params)
         return [normalizza_annuncio(r, self.dominio) for r in dati.get("items", [])]
 
     def pagina_annuncio(self, id_annuncio: int) -> str:

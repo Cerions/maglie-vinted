@@ -46,7 +46,8 @@ def test_cerca_codice_gestisce_pause_turn_e_sollecito():
     ai = ai_con([
         NS(content=[testo], stop_reason="pause_turn"),
         NS(content=[testo], stop_reason="end_turn"),
-        NS(content=[tool("riporta_prodotto", {"trovato": True, "squadra": "X", "fonti": ["u"]})], stop_reason="tool_use"),
+        NS(content=[tool("riporta_prodotto", {"trovato": True, "squadra": "X", "stagione": "2020/21", "fonti": ["u"]})],
+           stop_reason="tool_use"),
     ])
     r = ai.cerca_codice("CV8413-101", "194502132830", "nike")
     assert r["trovato"] and r["squadra"] == "X"
@@ -135,3 +136,27 @@ def test_client_httpx_errore_definitivo(monkeypatch):
                         lambda url, json, headers: httpx.Response(401, json={"error": {"message": "invalid x-api-key"}}))
     with pytest.raises(modulo.ErroreAPI, match="401: invalid x-api-key"):
         ai.confronta({}, {}, {})
+
+
+def test_cerca_codice_risposta_incompleta_chiede_correzione_una_volta():
+    vuoto = NS(type="tool_use", name="riporta_prodotto", id="toolu_1", input={"trovato": True})
+    completo = {"trovato": True, "nome_prodotto": "Inter away 2020/21", "squadra": "Inter", "stagione": "2020/21",
+                "fonti": ["https://esempio.it"]}
+    ai = ai_con([
+        NS(content=[vuoto], stop_reason="tool_use"),
+        NS(content=[tool("riporta_prodotto", completo)], stop_reason="tool_use"),
+    ])
+    assert ai.cerca_codice("CV8413-101", "194502132830", "nike") == completo
+    seconda = ai.client.messages.chiamate[1]
+    risposta_tool = seconda["messages"][-1]["content"][0]
+    assert risposta_tool["type"] == "tool_result" and risposta_tool["tool_use_id"] == "toolu_1"
+    assert risposta_tool["is_error"] is True
+    assert seconda["tool_choice"] == {"type": "tool", "name": "riporta_prodotto"}  # niente nuove ricerche
+
+
+def test_cerca_codice_incompleta_due_volte_si_arrende():
+    vuoto = lambda: NS(content=[NS(type="tool_use", name="riporta_prodotto", id="t", input={"trovato": True})],
+                       stop_reason="tool_use")
+    ai = ai_con([vuoto(), vuoto()])
+    assert ai.cerca_codice("CV8413-101", None, "nike") == {"trovato": True}
+    assert len(ai.client.messages.chiamate) == 2

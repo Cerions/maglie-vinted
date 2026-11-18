@@ -284,3 +284,25 @@ def test_nessun_consumo_se_salta_per_limite(ambiente):
     an = _analizzatore(ambiente, AIFinta())
     an.elabora(archivio, archivio.prossimo_in_coda())
     assert archivio.conn.execute("SELECT COUNT(*) AS n FROM consumi").fetchone()["n"] == 0
+
+
+def test_cache_con_risultato_vuoto_viene_rifatta(ambiente):
+    archivio = ambiente[5]
+    archivio.salva_cache_codice("CV8413-101|194502132830", {"trovato": True})  # voce rotta di una versione vecchia
+    ai = AIFinta()
+    an = _analizzatore(ambiente, ai)
+    an.elabora(archivio, archivio.prossimo_in_coda())
+    assert ai.chiamate["cerca"] == 1
+    assert archivio.cache_codice("CV8413-101|194502132830")["squadra"] == "Squadra X"
+    assert archivio.annuncio(10)["esito"] == "corrisponde"
+
+
+def test_prodotto_senza_dettagli_esito_incerto_e_niente_cache(ambiente):
+    archivio = ambiente[5]
+    ai = AIFinta(prodotto={"trovato": True, "fonti": []})
+    an = _analizzatore(ambiente, ai)
+    an.elabora(archivio, archivio.prossimo_in_coda())
+    r = archivio.annuncio(10)
+    assert r["esito"] == "incerto" and "non ha detto" in r["motivo"]
+    assert ai.chiamate["confronta"] == 0
+    assert archivio.cache_codice("CV8413-101|194502132830") is None

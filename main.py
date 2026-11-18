@@ -2,7 +2,7 @@
 
 Comandi:
   python main.py avvia [--ricerca URL_O_TESTO ...]
-  python main.py prova-ricerca [--ricerca URL_O_TESTO]
+  python main.py prova-ricerca [--ricerca URL_O_TESTO] [--salva-json FILE]
   python main.py prova-annuncio URL_O_ID [--ai]
   python main.py telegram-chat-id
   python main.py telegram-prova
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import logging
 import re
 import sys
@@ -24,7 +25,8 @@ from logging.handlers import RotatingFileHandler
 from maglie.config import Config, Ricerca, carica_config
 from maglie.db import Archivio
 from maglie.telegram import Telegram
-from maglie.vinted import ClientVinted, VintedErrore, estrai_foto_da_pagina, parametri_da_ricerca
+from maglie.vinted import (ClientVinted, VintedErrore, estrai_foto_da_pagina, normalizza_annuncio,
+                           parametri_da_ricerca)
 
 log = logging.getLogger("maglie")
 
@@ -112,10 +114,16 @@ def cmd_prova_ricerca(cfg: Config, args) -> int:
         params = parametri_da_ricerca(r.url, cfg.vinted.risultati_per_ricerca)
         print(f"\n== {r.nome}\nparametri: {params}")
         try:
-            annunci = client.cerca(params)
+            grezzo = client.cerca_grezzo(params)
         except VintedErrore as ex:
             print(f"ERRORE: {ex}")
             return 1
+        if args.salva_json:
+            nome_file = args.salva_json if len(cfg.ricerche) == 1 else f"{i + 1}_{args.salva_json}"
+            with open(nome_file, "w", encoding="utf-8") as f:
+                json.dump(grezzo, f, ensure_ascii=False, indent=2)
+            print(f"Risposta grezza salvata in {nome_file}")
+        annunci = [normalizza_annuncio(r, cfg.vinted.dominio) for r in grezzo.get("items", [])]
         for a in annunci[:15]:
             eta = eta_minuti(a)
             eta_txt = f"{eta:6.0f} min fa" if eta is not None else "   età ?   "
@@ -244,6 +252,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--ricerca", action="append", help="URL di ricerca Vinted o testo (ripetibile)")
     s = sub.add_parser("prova-ricerca", help="Una sola ricerca, stampa i risultati")
     s.add_argument("--ricerca", action="append")
+    s.add_argument("--salva-json", metavar="FILE", help="Salva la risposta grezza di Vinted (per il debug)")
     s = sub.add_parser("prova-annuncio", help="Mostra le foto trovate in un annuncio")
     s.add_argument("annuncio", help="URL o ID dell'annuncio")
     s.add_argument("--ai", action="store_true", help="Esegue anche l'analisi completa (costa una chiamata API)")

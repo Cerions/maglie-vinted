@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from .ai import AnalistaAI
+from .ai import AnalistaAI, prodotto_completo
 from .codici import normalizza_codice_stile, normalizza_upc
 from .db import Archivio
 from .telegram import e
@@ -80,9 +80,9 @@ def analizza_annuncio(annuncio: dict, foto: list[tuple[bytes, str]], ai: Analist
 
     chiave = f"{cs.codice}|{up.codice if up.valido else ''}"
     prodotto = archivio.cache_codice(chiave)
-    if prodotto is None:
+    if not prodotto_completo(prodotto):  # in cache solo risultati completi (le vecchie voci vuote si rifanno)
         prodotto = ai.cerca_codice(cs.codice, up.codice if up.valido else None, marca)
-        if prodotto.get("trovato"):  # i "non trovato" non li mettiamo in cache: potrebbe andare meglio dopo
+        if prodotto_completo(prodotto):  # i "non trovato" non li mettiamo in cache: potrebbe andare meglio dopo
             archivio.salva_cache_codice(chiave, prodotto)
     else:
         log.info("Codice %s preso dalla cache", chiave)
@@ -90,6 +90,9 @@ def analizza_annuncio(annuncio: dict, foto: list[tuple[bytes, str]], ai: Analist
     if not prodotto.get("trovato"):
         return Risultato("codice_non_trovato", (prodotto.get("note") or "nessuna fonte affidabile") + nota_upc,
                          prodotto=prodotto, **base)
+    if not prodotto_completo(prodotto):
+        return Risultato("incerto", "il codice esiste online ma la ricerca non ha detto a che maglia corrisponde"
+                         + nota_upc, prodotto=prodotto, **base)
 
     verdetto = ai.confronta(annuncio, {**lettura, "codice_stile": cs.codice}, prodotto)
     motivo = verdetto.get("motivo", "")
