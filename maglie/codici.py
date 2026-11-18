@@ -45,6 +45,8 @@ def normalizza_codice_stile(codice: str | None, marca: str | None) -> CodiceVeri
     c = re.sub(r"[‐‑‒–—_ ]", "-", c)   # trattini "strani" e spazi -> '-'
     c = re.sub(r"-+", "-", c).strip("-")
     m = marca_normalizzata(marca)
+    if "?" in c:
+        return CodiceVerificato(False, c, "codice letto solo in parte")
 
     # Puma a volte è stampato senza separatore: 76343201 -> 763432-01
     if m == "puma" and re.fullmatch(r"\d{8}", c):

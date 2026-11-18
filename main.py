@@ -76,6 +76,7 @@ def cmd_avvia(cfg: Config, args) -> int:
         log.warning("Telegram non configurato: gli avvisi finiscono solo nel log")
     client = ClientVinted(cfg.vinted.dominio)
     stop, sveglia = threading.Event(), threading.Event()
+    Archivio(cfg.percorso_db).chiudi()  # crea/aggiorna il database una volta, prima dei thread
 
     scanner = Scanner(cfg, client, telegram, stop, sveglia)
     analizzatore = Analizzatore(cfg, client, ai, telegram, stop, sveglia)
@@ -157,15 +158,18 @@ def cmd_prova_annuncio(cfg: Config, args) -> int:
         return 0
 
     from maglie.analisi import analizza_annuncio, raccogli_foto
+    from maglie.servizio import opzioni_da_config
 
     ai = crea_ai(cfg)
     titolo = re.search(r'property="og:title"[^>]+content="([^"]*)"', pagina)
+    prezzo = re.search(r'property="product:price:amount"[^>]+content="([^"]*)"', pagina)
     annuncio = {"id": id_annuncio, "titolo": titolo.group(1) if titolo else "", "marca": "", "taglia": "",
-                "url": f"{cfg.vinted.dominio}/items/{id_annuncio}", "foto_principale": ""}
+                "url": f"{cfg.vinted.dominio}/items/{id_annuncio}", "foto_principale": "",
+                "prezzo": f"{prezzo.group(1)} EUR" if prezzo else (f"{args.prezzo} EUR" if args.prezzo else "")}
     archivio = Archivio(cfg.percorso_db)
     immagini = raccogli_foto(client, annuncio, cfg.analisi.max_foto)
     try:
-        r = analizza_annuncio(annuncio, immagini, ai, archivio)
+        r = analizza_annuncio(annuncio, immagini, ai, archivio, opzioni_da_config(cfg))
     finally:
         consumo = ai.prendi_consumo()
         if consumo:
@@ -176,6 +180,12 @@ def cmd_prova_annuncio(cfg: Config, args) -> int:
     print(f"\nESITO: {r.esito}\n{r.motivo}")
     if r.nota_annuncio:
         print(f"Nota sull'annuncio: {r.nota_annuncio}")
+    print(f"Originalità dalle foto: {r.lettura.get('originalita')}")
+    print(f"Identificazione: {r.lettura.get('identificazione')}")
+    if r.testo_prezzo:
+        print(r.testo_prezzo)
+    elif r.prezzi is None:
+        print("Prezzo: nessun confronto (esito negativo, controllo disattivato o maglia non identificata)")
     print(f"\nConsumo: {consumo}")
     return 0
 
@@ -210,10 +220,12 @@ def cmd_telegram_prova(cfg: Config, args) -> int:
 
 def cmd_lista(cfg: Config, args) -> int:
     archivio = Archivio(cfg.percorso_db)
-    esiti = ("corrisponde", "incerto", "non_corrisponde", "codice_non_trovato", "codice_anomalo") if args.tutti else ("corrisponde",)
+    esiti = (("corrisponde", "visivo_originale", "incerto", "visivo_dubbia", "non_corrisponde", "visivo_falso",
+              "codice_non_trovato", "codice_anomalo", "illeggibile", "nessuna_etichetta")
+             if args.tutti else ("corrisponde", "visivo_originale"))
     righe = archivio.lista(esiti)
-    colonne = ["analizzato_il", "esito", "titolo", "prezzo", "taglia", "codice_stile", "upc", "prodotto", "url",
-               "motivo", "costo_usd"]
+    colonne = ["analizzato_il", "esito", "titolo", "prezzo", "prezzo_tipico", "giudizio_prezzo", "taglia",
+               "codice_stile", "upc", "prodotto", "url", "motivo", "costo_usd"]
     if args.csv:
         with open(args.csv, "w", newline="", encoding="utf-8-sig") as f:  # utf-8-sig: Excel lo apre bene
             w = csv.writer(f, delimiter=";")
@@ -223,7 +235,9 @@ def cmd_lista(cfg: Config, args) -> int:
         print(f"{len(righe)} righe salvate in {args.csv}")
     else:
         for r in righe:
-            print(f"[{r['esito']}] {r['titolo']} · {r['prezzo']} · {r['codice_stile']} · {r['url']}")
+            sconto = " 🔥" if r["giudizio_prezzo"] == "sotto" else ""
+            print(f"[{r['esito']}] {r['titolo']} · {r['prezzo']}{sconto} (di solito {r['prezzo_tipico'] or '?'}) · "
+                  f"{r['codice_stile'] or '-'} · {r['url']}")
         print(f"({len(righe)} maglie)")
     return 0
 
@@ -258,6 +272,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("prova-annuncio", help="Mostra le foto trovate in un annuncio")
     s.add_argument("annuncio", help="URL o ID dell'annuncio")
     s.add_argument("--ai", action="store_true", help="Esegue anche l'analisi completa (costa una chiamata API)")
+    s.add_argument("--prezzo", type=float, help="Prezzo dell'annuncio in euro, se non viene letto dalla pagina")
     sub.add_parser("telegram-chat-id", help="Trova il chat_id da mettere nel .env")
     sub.add_parser("telegram-prova", help="Manda un messaggio di prova al bot")
     s = sub.add_parser("lista", help="Mostra le maglie con etichetta OK")

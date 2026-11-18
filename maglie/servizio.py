@@ -14,7 +14,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from .analisi import analizza_annuncio, messaggio_esito, messaggio_nuovo, raccogli_foto
+from .analisi import OpzioniAnalisi, analizza_annuncio, messaggio_esito, messaggio_nuovo, raccogli_foto
 from .config import Config, Ricerca
 from .db import Archivio
 from .telegram import Telegram, e
@@ -43,6 +43,12 @@ def minuti_da(iso: str | None) -> float | None:
     except ValueError:
         return None
     return (datetime.now(timezone.utc) - t).total_seconds() / 60
+
+
+def opzioni_da_config(cfg: Config) -> OpzioniAnalisi:
+    a = cfg.analisi
+    return OpzioniAnalisi(controllo_prezzo=a.controllo_prezzo, solo_maglie_da_calcio=a.solo_maglie_da_calcio,
+                          giorni_cache=a.giorni_cache)
 
 
 def attesa_backoff(cfg: Config, fallimenti: int, bloccato: bool) -> float:
@@ -160,9 +166,15 @@ class Analizzatore:
             archivio.segna_saltato(riga["id"], "limite giornaliero di analisi raggiunto")
             self._rispondi(riga, "⏸ Limite giornaliero di analisi raggiunto: questa non la controllo.")
             return
+        spesa = archivio.costo_oggi()
+        if spesa >= self.cfg.analisi.budget_giornaliero_usd:
+            archivio.segna_saltato(riga["id"], f"budget giornaliero raggiunto (${spesa:.2f})")
+            self._rispondi(riga, f"⏸ Budget giornaliero di ${self.cfg.analisi.budget_giornaliero_usd:.2f} "
+                                 "raggiunto: questa non la controllo. Si riparte domani (ora UTC).")
+            return
         try:
             foto = raccogli_foto(self.client, annuncio, self.cfg.analisi.max_foto)
-            risultato = analizza_annuncio(annuncio, foto, self.ai, archivio)
+            risultato = analizza_annuncio(annuncio, foto, self.ai, archivio, opzioni_da_config(self.cfg))
         except VintedErrore as ex:
             n = archivio.segna_tentativo_fallito(riga["id"], str(ex), MAX_TENTATIVI_ANALISI)
             log.warning("Analisi %s: Vinted %s (tentativo %d) · %s", riga["id"], ex, n,
@@ -184,6 +196,7 @@ class Analizzatore:
             riga["id"], risultato.esito, codice_stile=risultato.codice_stile, upc=risultato.upc,
             taglia_etichetta=risultato.taglia_etichetta, prodotto=risultato.nome_prodotto or None,
             motivo=risultato.motivo + (f" Nota: {risultato.nota_annuncio}" if risultato.nota_annuncio else ""),
+            giudizio_prezzo=risultato.giudizio_prezzo, prezzo_tipico=risultato.prezzo_tipico,
         )
         log.info("Esito %s: %s %s · %s · %s", riga["id"], risultato.esito, risultato.codice_stile or "",
                  self._registra_consumo(archivio, riga["id"]), risultato.motivo)

@@ -196,3 +196,65 @@ def test_migrazione_db_vecchio(tmp_path):
     a.aggiorna_ricerca("r", 500)
     a.aggiorna_ricerca("r", 300)  # non scende mai
     assert a.stato_ricerca("r")["max_id"] == 500 and a.stato_ricerca("r")["ultimo_giro"]
+
+
+def test_migrazione_da_due_thread_insieme(tmp_path):
+    import sqlite3
+    import threading
+
+    from maglie.db import Archivio
+
+    percorso = tmp_path / "vecchio.db"
+    c = sqlite3.connect(percorso)
+    c.execute("CREATE TABLE ricerche_inizializzate (chiave TEXT PRIMARY KEY, il TEXT)")
+    c.commit()
+    c.close()
+    errori = []
+    pronti = threading.Barrier(4)
+
+    def apri():
+        try:
+            pronti.wait()
+            Archivio(percorso).chiudi()
+        except Exception as ex:  # noqa: BLE001
+            errori.append(ex)
+
+    thread = [threading.Thread(target=apri) for _ in range(4)]
+    for t in thread:
+        t.start()
+    for t in thread:
+        t.join()
+    assert errori == []
+    a = Archivio(percorso)
+    a.aggiorna_ricerca("r", 1)
+    assert a.stato_ricerca("r")["max_id"] == 1
+
+
+def test_migrazione_con_colonna_gia_aggiunta_da_altri(tmp_path, monkeypatch):
+    """Simula esattamente la gara: PRAGMA dice che manca, ma intanto un altro thread l'ha aggiunta."""
+    import sqlite3
+
+    from maglie.db import Archivio
+
+    percorso = tmp_path / "db.db"
+    Archivio(percorso).chiudi()  # colonne già presenti
+    originale = Archivio._migra
+
+    def migra_con_pragma_vecchio(self):
+        vero_execute = self.conn.execute
+
+        class ConnFinta:
+            def execute(self_, sql, *a):
+                if sql.startswith("PRAGMA table_info"):
+                    return [{"name": "chiave"}, {"name": "il"}]
+                return vero_execute(sql, *a)
+
+        conn = self.conn
+        self.conn = ConnFinta()
+        try:
+            originale(self)
+        finally:
+            self.conn = conn
+
+    monkeypatch.setattr(Archivio, "_migra", migra_con_pragma_vecchio)
+    Archivio(percorso).chiudi()  # non deve sollevare "duplicate column"

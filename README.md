@@ -125,6 +125,22 @@ Vengono contati anche i tentativi falliti, perché i token si pagano lo stesso. 
 con i prezzi in `config.toml` (default: Haiku 5.5). È una stima: il dato ufficiale è nella Console Anthropic.
 La ricerca su Vinted non costa nulla: si paga solo l'analisi degli annunci nuovi.
 
+## Originalità senza codice e prezzo
+
+La prima chiamata a Claude (quella che legge l'etichetta, senza ricerche web, ~0,1 centesimi) fa anche:
+- **tipo di articolo:** felpe, maglie da allenamento ecc. vengono scartate subito (`solo_maglie_da_calcio`);
+- **identificazione** della maglia dalla grafica (squadra, stagione, kit, versione);
+- **valutazione dell'originalità dalle foto:** stemma e sponsor, font, etichette interne, cuciture. Si usa quando
+  non c'è un codice utilizzabile (niente foto dell'etichetta, codice illeggibile o non trovato online);
+- **stima del prezzo** tipico da usata.
+
+Il **confronto di prezzo** con una ricerca web (eBay, Vinted, negozi vintage) parte solo per le maglie che
+sembrano originali e, con `controllo_prezzo = "occasioni"`, solo se la stima dice che l'annuncio costa meno della
+media. I prezzi trovati restano in cache per `giorni_cache` giorni. Se la maglia ha un codice valido, i prezzi
+arrivano già con la ricerca del codice, senza costi in più.
+
+> La valutazione dalle foto è un indizio, non una perizia: un buon falso in foto piccole può passare.
+
 ## Esiti
 
 | Esito | Significato |
@@ -135,7 +151,14 @@ La ricerca su Vinted non costa nulla: si paga solo l'analisi degli annunci nuovi
 | ❔ Da verificare a mano | Dati insufficienti, oppure codice a barre o taglia incoerenti |
 | ❔ Codice non trovato online | Nessuna fonte: può essere un codice raro come un codice inventato |
 | ❔ Codice illeggibile | L'etichetta c'è ma la foto non permette di leggerla |
-| ➖ Nessuna foto dell'etichetta | Niente da verificare |
+| 🟢 Probabile originale | Senza codice, ma le foto non mostrano indizi di falso → entra nella lista |
+| ❔ Originalità dubbia | Senza codice, le foto non bastano o qualcosa non torna |
+| ⚠️ Probabile falso | Indizi concreti di falso nelle foto |
+| ➖ Nessuna foto dell'etichetta | Nessun codice e foto non valutabili |
+| ➖ Non è una maglia da gara | Felpa, allenamento, altro: scartata subito |
+
+Se il prezzo è sotto quello tipico, il messaggio inizia con **🔥 Costa meno del solito** e riporta il confronto
+(es. "💰 25 € · di solito 40–60 € usata → circa il 50% in meno").
 
 ## Note pratiche
 

@@ -181,3 +181,36 @@ def test_lettura_etichetta_non_riceve_il_titolo():
     ai.leggi_etichetta([(b"a", "image/jpeg")], {"titolo": "TITOLO_CHE_NON_DEVE_COMPARIRE", "marca": "Nike"})
     testo = ai.client.messages.chiamate[0]["messages"][0]["content"][-1]["text"]
     assert "TITOLO_CHE_NON_DEVE_COMPARIRE" not in testo and "Nike" in testo
+
+
+def test_lettura_chiede_caratteri_incerti_con_punto_interrogativo_e_valutazioni():
+    ai = ai_con([NS(content=[tool("riporta_etichetta", {"tipo_articolo": "maglia_da_calcio"})], stop_reason="tool_use")])
+    ai.leggi_etichetta([(b"a", "image/jpeg")], {"marca": "Nike", "taglia": "L", "condizione": "Ottime"})
+    chiamata = ai.client.messages.chiamate[0]
+    testo = chiamata["messages"][0]["content"][-1]["text"]
+    assert "'?'" in testo and "ORIGINALITÀ" in testo and "PREZZO" in testo and "Ottime" in testo
+    schema = chiamata["tools"][0]["input_schema"]
+    assert {"tipo_articolo", "originalita", "identificazione", "stima_prezzo_usato_eur"} <= set(schema["required"])
+
+
+def test_cerca_prezzi():
+    testo = NS(type="text", text="...")
+    ai = ai_con([
+        NS(content=[testo], stop_reason="end_turn"),
+        NS(content=[tool("riporta_prezzi", {"usato_min_eur": 40, "usato_max_eur": 60, "nuovo_eur": None,
+                                            "fonti": ["u"], "note": None})], stop_reason="tool_use"),
+    ])
+    r = ai.cerca_prezzi("Inter 2009/10 home replica", {"condizione": "Ottime", "taglia": "L"})
+    assert r["usato_min_eur"] == 40
+    prima = ai.client.messages.chiamate[0]
+    assert "Inter 2009/10 home replica" in prima["messages"][0]["content"]
+    assert prima["tools"][0]["type"] == "web_search_20250305"
+    assert ai.client.messages.chiamate[1]["messages"][-1]["content"].startswith("Ora chiama riporta_prezzi")
+
+
+def test_config_controllo_prezzo_non_valido(tmp_path):
+    from maglie.config import carica_config
+
+    (tmp_path / "config.toml").write_text('[analisi]\ncontrollo_prezzo = "a volte"\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="controllo_prezzo"):
+        carica_config(tmp_path / "config.toml")

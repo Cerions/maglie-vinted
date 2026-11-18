@@ -37,8 +37,17 @@ class VintedConfig:
 class AnalisiConfig:
     modello: str = "claude-haiku-5-5"
     max_foto: int = 8
-    max_analisi_al_giorno: int = 200
+    max_analisi_al_giorno: int = 2000
     ricerche_web_per_codice: int = 3
+    # Tetto di spesa giornaliero (dollari): raggiunto questo, le analisi si fermano fino a domani
+    budget_giornaliero_usd: float = 1.0
+    # Analizza solo le maglie da gara (salta felpe, allenamento, ecc.)
+    solo_maglie_da_calcio: bool = True
+    # Controllo prezzo con ricerca web: "occasioni" (solo se la stima dice che può costare meno del solito),
+    # "sempre" oppure "mai"
+    controllo_prezzo: str = "occasioni"
+    # Dopo quanti giorni rifare la ricerca di un codice o dei prezzi di una maglia
+    giorni_cache: int = 7
     # Prezzi in dollari (default: Claude Haiku 5.5). Se cambi modello, aggiornali.
     prezzo_input_mtok: float = 0.10
     prezzo_output_mtok: float = 0.50
@@ -100,6 +109,8 @@ def carica_config(percorso: str | Path = "config.toml") -> Config:
     cfg.telegram.bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", cfg.telegram.bot_token)
     cfg.telegram.chat_id = os.environ.get("TELEGRAM_CHAT_ID", cfg.telegram.chat_id)
 
+    if cfg.analisi.controllo_prezzo not in ("occasioni", "sempre", "mai"):
+        raise ValueError('controllo_prezzo deve essere "occasioni", "sempre" o "mai"')
     v = cfg.vinted
     if v.intervallo_min_secondi > v.intervallo_max_secondi:
         raise ValueError("intervallo_min_secondi non può superare intervallo_max_secondi")

@@ -128,23 +128,65 @@ def costo_richiesta(prezzi: Prezzi, token_in: int, token_out: int, ricerche_web:
     p_out = prezzi.output_mtok_lungo if lungo else prezzi.output_mtok
     return token_in / 1e6 * p_in + token_out / 1e6 * p_out + ricerche_web * prezzi.ricerca_web
 
+SCHEMA_PREZZI = {
+    "type": ["object", "null"],
+    "properties": {
+        "usato_min_eur": {"type": ["number", "null"], "description": "Prezzo tipico di una usata in condizioni simili, minimo, in euro."},
+        "usato_max_eur": {"type": ["number", "null"], "description": "Prezzo tipico di una usata, massimo, in euro."},
+        "nuovo_eur": {"type": ["number", "null"], "description": "Prezzo da nuova (listino o negozi), in euro."},
+        "fonti": {"type": "array", "items": {"type": "string"}, "description": "URL delle pagine con i prezzi."},
+        "note": {"type": ["string", "null"]},
+    },
+    "required": ["usato_min_eur", "usato_max_eur", "nuovo_eur", "fonti", "note"],
+}
+
 TOOL_ETICHETTA = {
     "name": "riporta_etichetta",
     "description": "Riporta cosa hai trovato nelle foto dell'annuncio.",
     "input_schema": {
         "type": "object",
         "properties": {
+            "tipo_articolo": {"type": "string", "enum": ["maglia_da_calcio", "allenamento", "felpa_o_giacca", "altro"],
+                              "description": "maglia_da_calcio = maglia da gara di una squadra (replica o da giocatore)."},
             "etichetta_trovata": {"type": "boolean", "description": "C'è almeno una foto dell'etichetta interna con i codici (codice articolo / codice a barre)?"},
             "indice_foto": {"type": ["integer", "null"], "description": "Numero della foto con l'etichetta (da 1)."},
             "marca": {"type": ["string", "null"], "description": "Marca dell'etichetta: nike, adidas, puma, ..."},
-            "codice_stile": {"type": ["string", "null"], "description": "Codice articolo esattamente come stampato, es. CV8413-101, GM4614, 763432-01."},
+            "codice_stile": {"type": ["string", "null"], "description": "Codice articolo come stampato, es. CV8413-101, GM4614, 763432-01. Caratteri incerti: '?'."},
             "upc": {"type": ["string", "null"], "description": "Codice a barre numerico (12-13 cifre) se presente."},
             "taglia_etichetta": {"type": ["string", "null"], "description": "Taglia stampata sull'etichetta dei codici."},
             "leggibilita": {"type": "string", "enum": ["buona", "parziale", "scarsa"]},
-            "descrizione_maglia": {"type": "string", "description": "Cosa mostrano le foto: squadra/stemma, colori principali, sponsor, prima/seconda/terza maglia se deducibile, eventuale stagione."},
+            "descrizione_maglia": {"type": "string", "description": "Cosa mostrano le foto: stemma, colori, grafica, sponsor, colletto. Solo ciò che si vede."},
+            "identificazione": {
+                "type": ["object", "null"],
+                "description": "Quale maglia è secondo te, riconoscendola dalla grafica (null se non la riconosci).",
+                "properties": {
+                    "squadra": {"type": ["string", "null"]},
+                    "stagione": {"type": ["string", "null"]},
+                    "tipo_kit": {"type": ["string", "null"], "description": "home, away, third, fourth, portiere, altro"},
+                    "versione": {"type": ["string", "null"], "description": "replica/stadium, authentic/player, retro/remake"},
+                    "confidenza": {"type": "string", "enum": ["alta", "media", "bassa"]},
+                },
+                "required": ["squadra", "stagione", "tipo_kit", "versione", "confidenza"],
+            },
+            "originalita": {
+                "type": "object",
+                "properties": {
+                    "giudizio": {"type": "string", "enum": ["probabile_originale", "dubbia", "probabile_falso", "non_valutabile"]},
+                    "indizi_originale": {"type": "array", "items": {"type": "string"}, "description": "Massimo 3, brevi."},
+                    "indizi_falso": {"type": "array", "items": {"type": "string"}, "description": "Massimo 3, brevi."},
+                },
+                "required": ["giudizio", "indizi_originale", "indizi_falso"],
+            },
+            "stima_prezzo_usato_eur": {
+                "type": ["object", "null"],
+                "description": "Stima a memoria del prezzo tipico di questa maglia usata, con taglia e condizioni simili.",
+                "properties": {"min": {"type": ["number", "null"]}, "max": {"type": ["number", "null"]}},
+                "required": ["min", "max"],
+            },
             "note": {"type": "string"},
         },
-        "required": ["etichetta_trovata", "leggibilita", "descrizione_maglia"],
+        "required": ["tipo_articolo", "etichetta_trovata", "leggibilita", "descrizione_maglia", "identificazione",
+                     "originalita", "stima_prezzo_usato_eur"],
     },
 }
 
@@ -167,12 +209,19 @@ TOOL_PRODOTTO = {
             "taglia_da_upc": {"type": ["string", "null"], "description": "Taglia associata al codice a barre, solo se una fonte la riporta."},
             "upc_coerente": {"type": ["boolean", "null"], "description": "Il codice a barre risulta associato allo stesso prodotto? null se non verificabile."},
             "fonti": {"type": "array", "items": {"type": "string"}, "description": "URL delle pagine usate."},
+            "prezzi": SCHEMA_PREZZI,
             "note": {"type": "string"},
         },
         # tutti obbligatori (null se non noti): così il modello non può rispondere solo {"trovato": true}
         "required": ["trovato", "nome_prodotto", "squadra", "stagione", "tipo_kit", "colori", "aspetto", "versione",
-                     "taglia_da_upc", "upc_coerente", "fonti", "note"],
+                     "taglia_da_upc", "upc_coerente", "fonti", "prezzi", "note"],
     },
+}
+
+TOOL_PREZZI = {
+    "name": "riporta_prezzi",
+    "description": "Riporta i prezzi trovati per questa maglia.",
+    "input_schema": SCHEMA_PREZZI | {"type": "object"},
 }
 
 TOOL_VERDETTO = {
@@ -251,16 +300,26 @@ class AnalistaAI:
                 "type": "base64", "media_type": tipo, "data": base64.b64encode(dati).decode()}})
         contenuto.append({"type": "text", "text": (
             "Queste sono le foto di un annuncio Vinted di una maglia da calcio.\n"
-            f"Marca dichiarata: {annuncio.get('marca')}\n\n"
-            "Cerca la foto dell'etichetta interna con i codici (di solito una piccola etichetta bianca "
-            "con codice articolo tipo CV8413-101 e un codice a barre numerico). Trascrivi i codici "
-            "carattere per carattere: se una cifra non è leggibile con sicurezza, scrivi null invece "
-            "di indovinare. Non confondere l'etichetta di composizione/lavaggio con quella dei codici. "
-            "Descrivi anche la maglia mostrata nelle altre foto, SOLO in base a ciò che vedi (stemma, "
-            "colori, grafica, sponsor, colletto): non dedurre stagione o tipo di kit da testi o supposizioni."
+            f"Marca dichiarata: {annuncio.get('marca')} · Taglia: {annuncio.get('taglia')} · "
+            f"Condizioni: {annuncio.get('condizione')}\n\n"
+            "1) ETICHETTA. Cerca la foto dell'etichetta interna con i codici (di solito una piccola etichetta "
+            "bianca con codice articolo tipo CV8413-101 e un codice a barre numerico). Trascrivi i codici "
+            "carattere per carattere; se un carattere è incerto scrivi '?' al suo posto (es. CV84?3-101), "
+            "non inventarlo. Non confondere l'etichetta di composizione/lavaggio con quella dei codici.\n"
+            "2) DESCRIZIONE. Descrivi la maglia SOLO in base a ciò che vedi (stemma, colori, grafica, sponsor, "
+            "colletto), senza dedurre stagione o kit da testi.\n"
+            "3) IDENTIFICAZIONE. Se riconosci la maglia dalla grafica, indica squadra, stagione, kit e versione "
+            "con la tua confidenza.\n"
+            "4) ORIGINALITÀ. Valuta dalle foto: qualità e tipo di applicazione di stemma, logo e sponsor "
+            "(ricamato/termoadesivo coerente con la versione), font di sponsor e numeri, etichette interne "
+            "(taglia, lavaggio, codici, jock tag) e loro stile per l'epoca, cuciture, tessuto tecnico, colletto. "
+            "probabile_falso solo con indizi concreti (es. stemma storto o sbavato, font sbagliato, etichette "
+            "incoerenti con marca/epoca); se le foto non permettono di giudicare: non_valutabile. Un remake "
+            "retrò ufficiale non è un falso, ma indicalo in versione.\n"
+            "5) PREZZO. Stima a memoria quanto vale di solito questa maglia usata, con queste condizioni e taglia."
         )})
         r = self._crea(
-            model=self.modello, max_tokens=1024, tools=[TOOL_ETICHETTA],
+            model=self.modello, max_tokens=1800, tools=[TOOL_ETICHETTA],
             tool_choice={"type": "tool", "name": "riporta_etichetta"},
             messages=[{"role": "user", "content": contenuto}],
         )
@@ -268,7 +327,7 @@ class AnalistaAI:
                                                          "descrizione_maglia": ""}
 
     # 2) Ricerca web del codice ------------------------------------------------
-    def cerca_codice(self, codice: str, upc: str | None, marca: str | None) -> dict:
+    def cerca_codice(self, codice: str, upc: str | None, marca: str | None, con_prezzi: bool = True) -> dict:
         richiesta = (
             f"Identifica la maglia da calcio {marca or ''} con codice articolo {codice}"
             + (f" e codice a barre (UPC/EAN) {upc}" if upc else "")
@@ -276,6 +335,8 @@ class AnalistaAI:
               "siti di rivenditori). Riporta squadra, stagione, tipo di kit e colori SOLO se le fonti "
               "lo confermano per quel codice esatto. "
             + ("Se trovi il codice a barre, indica a quale prodotto e taglia è associato. " if upc else "")
+            + ("Riporta anche i prezzi che vedi nelle fonti: da nuova e, se ci sono, di usate (eBay, Vinted, "
+               "negozi vintage), convertiti in euro. " if con_prezzi else "Lascia prezzi a null. ")
             + "Alla fine chiama sempre riporta_prodotto compilando TUTTI i campi con quello che hai "
               "trovato (null solo se davvero sconosciuto) e mettendo in fonti gli URL usati. "
               "Se le fonti non identificano il prodotto, trovato=false."
@@ -313,6 +374,35 @@ class AnalistaAI:
             if r.stop_reason != "pause_turn":  # ha finito senza chiamare il tool: sollecitiamo
                 messaggi.append({"role": "user", "content": "Ora chiama riporta_prodotto con quello che hai trovato."})
         return {"trovato": False, "fonti": [], "note": "nessuna risposta strutturata"}
+
+    # 2b) Ricerca dei prezzi di una maglia identificata ---------------------
+    def cerca_prezzi(self, maglia: str, annuncio: dict) -> dict:
+        richiesta = (
+            f"Quanto costa di solito questa maglia da calcio: {maglia}?\n"
+            f"Condizioni dell'annuncio: {annuncio.get('condizione') or 'non indicate'}, taglia "
+            f"{annuncio.get('taglia') or 'non indicata'}.\n"
+            "Cerca annunci e vendite di usate (eBay, Vinted, negozi di maglie vintage come Classic Football "
+            "Shirts) e il prezzo da nuova. Considera la stessa versione (replica/authentic) e, se possibile, "
+            "condizioni simili; le taglie da bambino costano meno. Converti in euro. Usa poche ricerche mirate. "
+            "Alla fine chiama riporta_prezzi; se non trovi prezzi affidabili lascia i campi a null."
+        )
+        messaggi: list[dict] = [{"role": "user", "content": richiesta}]
+        strumenti = [
+            {"type": "web_search_20250305", "name": "web_search", "max_uses": self.ricerche_web},
+            TOOL_PREZZI,
+        ]
+        for tentativo in range(4):
+            r = self._crea(
+                model=self.modello, max_tokens=1200, tools=strumenti, messages=messaggi,
+                tool_choice={"type": "tool", "name": "riporta_prezzi"} if tentativo >= 2 else {"type": "auto"},
+            )
+            risultato = _tool_input(r, "riporta_prezzi")
+            if risultato is not None:
+                return risultato
+            messaggi.append({"role": "assistant", "content": r.content})
+            if r.stop_reason != "pause_turn":
+                messaggi.append({"role": "user", "content": "Ora chiama riporta_prezzi con quello che hai trovato."})
+        return {"usato_min_eur": None, "usato_max_eur": None, "nuovo_eur": None, "fonti": [], "note": None}
 
     # 3) Confronto annuncio <-> prodotto --------------------------------------
     def confronta(self, annuncio: dict, lettura: dict, prodotto: dict,

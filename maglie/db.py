@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -34,7 +35,9 @@ CREATE TABLE IF NOT EXISTS annunci (
     taglia_etichetta TEXT,
     prodotto        TEXT,
     motivo          TEXT,
-    analizzato_il   TEXT
+    analizzato_il   TEXT,
+    giudizio_prezzo TEXT,     -- sotto | media | sopra | indicativo
+    prezzo_tipico   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_annunci_stato ON annunci(stato);
 CREATE INDEX IF NOT EXISTS idx_annunci_esito ON annunci(esito);
@@ -64,7 +67,9 @@ CREATE TABLE IF NOT EXISTS cache_codici (
 );
 """
 
-ESITI_LISTA = ("corrisponde",)
+ESITI_LISTA = ("corrisponde", "visivo_originale")
+
+_LOCK_SCHEMA = threading.Lock()
 
 
 def adesso() -> str:
@@ -75,17 +80,29 @@ class Archivio:
     def __init__(self, percorso: str | Path):
         self.conn = sqlite3.connect(str(percorso), timeout=30)
         self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.executescript(SCHEMA)
-        self._migra()
-        self.conn.commit()
+        # creazione/aggiornamento dello schema: un thread alla volta (in parallelo SQLite dà "database is locked")
+        with _LOCK_SCHEMA:
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.executescript(SCHEMA)
+            self._migra()
+            self.conn.commit()
 
     def _migra(self) -> None:
         """Aggiunge le colonne nuove ai database creati con versioni precedenti."""
-        colonne = {r["name"] for r in self.conn.execute("PRAGMA table_info(ricerche_inizializzate)")}
-        for nome, tipo in (("max_id", "INTEGER"), ("ultimo_giro", "TEXT")):
-            if nome not in colonne:
-                self.conn.execute(f"ALTER TABLE ricerche_inizializzate ADD COLUMN {nome} {tipo}")
+        nuove = {
+            "ricerche_inizializzate": (("max_id", "INTEGER"), ("ultimo_giro", "TEXT")),
+            "annunci": (("giudizio_prezzo", "TEXT"), ("prezzo_tipico", "TEXT")),
+        }
+        for tabella, colonne_nuove in nuove.items():
+            colonne = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({tabella})")}
+            for nome, tipo in colonne_nuove:
+                if nome not in colonne:
+                    try:
+                        self.conn.execute(f"ALTER TABLE {tabella} ADD COLUMN {nome} {tipo}")
+                    except sqlite3.OperationalError as ex:
+                        # un altro thread l'ha appena aggiunta: va bene così
+                        if "duplicate column" not in str(ex):
+                            raise
 
     def chiudi(self) -> None:
         self.conn.close()
@@ -155,11 +172,13 @@ class Archivio:
         return self.conn.execute("SELECT tentativi FROM annunci WHERE id=?", (id_annuncio,)).fetchone()["tentativi"]
 
     def salva_esito(self, id_annuncio: int, esito: str, *, codice_stile=None, upc=None,
-                    taglia_etichetta=None, prodotto=None, motivo=None) -> None:
+                    taglia_etichetta=None, prodotto=None, motivo=None, giudizio_prezzo=None,
+                    prezzo_tipico=None) -> None:
         self.conn.execute(
             """UPDATE annunci SET stato='analizzato', esito=?, codice_stile=?, upc=?, taglia_etichetta=?,
-               prodotto=?, motivo=?, analizzato_il=? WHERE id=?""",
-            (esito, codice_stile, upc, taglia_etichetta, prodotto, motivo, adesso(), id_annuncio),
+               prodotto=?, motivo=?, analizzato_il=?, giudizio_prezzo=?, prezzo_tipico=? WHERE id=?""",
+            (esito, codice_stile, upc, taglia_etichetta, prodotto, motivo, adesso(), giudizio_prezzo,
+             prezzo_tipico, id_annuncio),
         )
         self.conn.commit()
 
@@ -201,9 +220,18 @@ class Archivio:
         ).fetchall()
 
     # --- cache codici -------------------------------------------------------
-    def cache_codice(self, chiave: str) -> dict | None:
-        r = self.conn.execute("SELECT risultato FROM cache_codici WHERE chiave=?", (chiave,)).fetchone()
-        return json.loads(r["risultato"]) if r else None
+    def cache_codice(self, chiave: str, max_giorni: float | None = None) -> dict | None:
+        r = self.conn.execute("SELECT risultato, il FROM cache_codici WHERE chiave=?", (chiave,)).fetchone()
+        if not r:
+            return None
+        if max_giorni is not None:
+            try:
+                eta = datetime.now(timezone.utc) - datetime.fromisoformat(r["il"])
+            except (TypeError, ValueError):
+                return None
+            if eta.total_seconds() > max_giorni * 86400:
+                return None
+        return json.loads(r["risultato"])
 
     def salva_cache_codice(self, chiave: str, risultato: dict) -> None:
         self.conn.execute(

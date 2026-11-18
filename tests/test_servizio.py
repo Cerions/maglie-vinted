@@ -61,7 +61,8 @@ class AIFinta:
                                      "stagione": "2020/21", "tipo_kit": "away", "upc_coerente": True,
                                      "fonti": ["https://esempio.it/cv8413"]}
         self.verdetto = verdetto or {"esito": "corrisponde", "taglia_coerente": True, "motivo": "tutto coerente"}
-        self.chiamate = {"leggi": 0, "cerca": 0, "confronta": 0}
+        self.chiamate = {"leggi": 0, "cerca": 0, "confronta": 0, "prezzi": 0}
+        self.prezzi = {"usato_min_eur": 40, "usato_max_eur": 60, "nuovo_eur": 90, "fonti": ["https://prezzi.it"], "note": None}
         self.consumo = Consumo()
         self.errore_lettura = None
 
@@ -83,10 +84,16 @@ class AIFinta:
         self.ultime_foto = foto
         return dict(self.lettura)
 
-    def cerca_codice(self, codice, upc, marca):
+    def cerca_codice(self, codice, upc, marca, con_prezzi=True):
         self.chiamate["cerca"] += 1
         self._spendi(20000, 500, 2)
         return dict(self.prodotto)
+
+    def cerca_prezzi(self, maglia, annuncio):
+        self.chiamate["prezzi"] += 1
+        self.ultima_maglia_prezzi = maglia
+        self._spendi(15000, 300, 2)
+        return dict(self.prezzi)
 
     def confronta(self, annuncio, lettura, prodotto, foto_maglia=None):
         self.chiamate["confronta"] += 1
@@ -197,7 +204,7 @@ def test_cache_del_codice(ambiente):
     client.risultati = [annuncio_raw(11), annuncio_raw(10)]
     scanner.giro_ricerca(archivio, cfg.ricerche[0])
     an.elabora(archivio, archivio.prossimo_in_coda())
-    assert ai.chiamate == {"leggi": 2, "cerca": 1, "confronta": 2}
+    assert ai.chiamate == {"leggi": 2, "cerca": 1, "confronta": 2, "prezzi": 1}  # prezzi: poi dalla cache
 
 
 def test_nessuna_etichetta(ambiente):
@@ -261,8 +268,9 @@ def test_consumo_registrato_per_ogni_analisi(ambiente):
     righe = archivio.conn.execute("SELECT * FROM consumi").fetchall()
     assert len(righe) == 1
     r = righe[0]
-    assert (r["id_annuncio"], r["token_in"], r["token_out"], r["ricerche_web"]) == (10, 29500, 1000, 2)
-    assert r["costo"] == pytest.approx(29500 / 1e6 * 0.10 + 1000 / 1e6 * 0.50 + 0.02)
+    # lettura + ricerca codice + confronto + ricerca prezzi (il prodotto finto non ha prezzi)
+    assert (r["id_annuncio"], r["token_in"], r["token_out"], r["ricerche_web"]) == (10, 44500, 1300, 4)
+    assert r["costo"] == pytest.approx(44500 / 1e6 * 0.10 + 1300 / 1e6 * 0.50 + 0.04)
     assert archivio.costo_oggi() == pytest.approx(r["costo"])
     assert archivio.lista()[0]["costo_usd"] == pytest.approx(r["costo"])
 
@@ -355,3 +363,24 @@ def test_nota_sul_testo_del_venditore_nel_messaggio(ambiente):
     assert "📝 il venditore la chiama terza maglia" in tg.messaggi[-1]["testo"]
     assert archivio.annuncio(10)["esito"] == "corrisponde"
     assert "Nota: il venditore" in archivio.annuncio(10)["motivo"]
+
+
+def test_budget_giornaliero_raggiunto(ambiente):
+    cfg, *_ = ambiente
+    archivio = ambiente[5]
+    cfg.analisi.budget_giornaliero_usd = 0.01
+    archivio.registra_consumo(1, 0, 0, 1, 0.02)
+    ai = AIFinta()
+    an = _analizzatore(ambiente, ai)
+    an.elabora(archivio, archivio.prossimo_in_coda())
+    assert archivio.annuncio(10)["stato"] == "saltato" and ai.chiamate["leggi"] == 0
+    assert "Budget giornaliero" in ambiente[2].messaggi[-1]["testo"]
+
+
+def test_esito_e_prezzo_salvati_nel_db(ambiente):
+    archivio = ambiente[5]
+    ai = AIFinta()
+    an = _analizzatore(ambiente, ai)
+    an.elabora(archivio, archivio.prossimo_in_coda())
+    r = archivio.annuncio(10)
+    assert r["giudizio_prezzo"] == "sotto" and r["prezzo_tipico"] == "40 €–60 €"  # 25 € contro 40-60 €

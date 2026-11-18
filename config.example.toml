@@ -36,10 +36,21 @@ url = "https://www.vinted.it/catalog?search_text=maglia%20calcio&order=newest_fi
 modello = "claude-haiku-5-5"
 # Foto massime inviate al modello per annuncio (più foto = più costo)
 max_foto = 8
-# Tetto di sicurezza sui costi
-max_analisi_al_giorno = 200
-# Ricerche web massime per identificare un codice
+# Tetti di sicurezza: numero di annunci analizzati e spesa al giorno (dollari, giorno UTC).
+# Con una ricerca generica escono anche 50-80 annunci nuovi all'ora.
+max_analisi_al_giorno = 2000
+budget_giornaliero_usd = 1.0
+# Ricerche web massime per ogni ricerca (codice o prezzi)
 ricerche_web_per_codice = 3
+# Analizza solo le maglie da gara: felpe, maglie da allenamento ecc. vengono scartate subito
+solo_maglie_da_calcio = true
+# Confronto prezzo con ricerca web:
+#   "occasioni" = solo se la stima gratuita dice che costa meno della media (consigliato)
+#   "sempre"    = per ogni maglia che sembra originale (più preciso, costa di più)
+#   "mai"       = niente confronto
+controllo_prezzo = "occasioni"
+# Dopo quanti giorni rifare la ricerca di un codice o dei prezzi della stessa maglia
+giorni_cache = 7
 # Prezzi in dollari usati per calcolare il costo nel log (default: Claude Haiku 5.5).
 # Se cambi modello aggiornali con quelli della pagina prezzi di Anthropic.
 prezzo_input_mtok = 0.10          # per milione di token in input
