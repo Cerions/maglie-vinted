@@ -88,18 +88,20 @@ class AIFinta:
         self._spendi(20000, 500, 2)
         return dict(self.prodotto)
 
-    def confronta(self, annuncio, lettura, prodotto):
+    def confronta(self, annuncio, lettura, prodotto, foto_maglia=None):
         self.chiamate["confronta"] += 1
+        self.ultime_foto_confronto = foto_maglia
         self._spendi(1500, 200, 0)
         self.ultimo_annuncio = annuncio
         return dict(self.verdetto)
 
 
 def annuncio_raw(id_, minuti_fa=1):
+    ts = time.time() - minuti_fa * 60 if minuti_fa is not None else None
     return {"id": id_, "titolo": f"Maglia {id_}", "descrizione": "", "prezzo": "25.0 EUR", "taglia": "L",
             "marca": "Nike", "url": f"https://www.vinted.it/items/{id_}",
             "foto_principale": f"https://images1.vinted.net/t/A/f800/{id_}1.jpeg?s=1",
-            "timestamp": time.time() - minuti_fa * 60, "promosso": False}
+            "timestamp": ts, "promosso": False}
 
 
 @pytest.fixture
@@ -306,3 +308,50 @@ def test_prodotto_senza_dettagli_esito_incerto_e_niente_cache(ambiente):
     assert r["esito"] == "incerto" and "non ha detto" in r["motivo"]
     assert ai.chiamate["confronta"] == 0
     assert archivio.cache_codice("CV8413-101|194502132830") is None
+
+
+def test_annuncio_ripubblicato_con_id_vecchio_ignorato(ambiente):
+    cfg, client, tg, _, _, archivio, scanner = ambiente
+    cfg.vinted.margine_id_vecchi = 1000
+    client.risultati = [annuncio_raw(50_000, minuti_fa=None)]
+    scanner.giro_ricerca(archivio, cfg.ricerche[0])  # baseline, max_id = 50.000
+    vecchio = annuncio_raw(10_000) | {"timestamp": None}  # ID molto più basso: annuncio di giorni fa
+    tardivo = annuncio_raw(49_500) | {"timestamp": None}  # poco più basso: indicizzato in ritardo, va avvisato
+    nuovo = annuncio_raw(50_100) | {"timestamp": None}
+    client.risultati = [nuovo, vecchio, tardivo]
+    assert scanner.giro_ricerca(archivio, cfg.ricerche[0]) == 2
+    assert archivio.annuncio(10_000)["stato"] == "vecchio"
+    assert archivio.annuncio(49_500)["stato"] == "in_coda"
+    assert archivio.stato_ricerca(cfg.ricerche[0].url)["max_id"] == 50_100
+
+
+def test_dopo_una_pausa_lunga_niente_avvisi_arretrati(ambiente):
+    cfg, client, tg, _, _, archivio, scanner = ambiente
+    client.risultati = [annuncio_raw(1)]
+    scanner.giro_ricerca(archivio, cfg.ricerche[0])
+    archivio.conn.execute("UPDATE ricerche_inizializzate SET ultimo_giro='2026-01-01T00:00:00+00:00'")
+    archivio.conn.commit()
+    client.risultati = [annuncio_raw(2), annuncio_raw(3), annuncio_raw(1)]
+    assert scanner.giro_ricerca(archivio, cfg.ricerche[0]) == 0
+    assert archivio.annuncio(2)["stato"] == "baseline" and tg.messaggi == []
+    client.risultati = [annuncio_raw(4), annuncio_raw(3)]
+    assert scanner.giro_ricerca(archivio, cfg.ricerche[0]) == 1  # da qui si riparte normalmente
+
+
+def test_confronto_riceve_le_foto_della_maglia_senza_etichetta(ambiente):
+    archivio = ambiente[5]
+    ai = AIFinta()  # etichetta nella foto 2
+    an = _analizzatore(ambiente, ai)
+    an.elabora(archivio, archivio.prossimo_in_coda())
+    assert len(ai.ultime_foto) == 2 and len(ai.ultime_foto_confronto) == 1
+
+
+def test_nota_sul_testo_del_venditore_nel_messaggio(ambiente):
+    archivio, tg = ambiente[5], ambiente[2]
+    ai = AIFinta(verdetto={"esito": "corrisponde", "taglia_coerente": None, "motivo": "foto coerenti",
+                           "nota_annuncio": "il venditore la chiama terza maglia, è la quarta"})
+    an = _analizzatore(ambiente, ai)
+    an.elabora(archivio, archivio.prossimo_in_coda())
+    assert "📝 il venditore la chiama terza maglia" in tg.messaggi[-1]["testo"]
+    assert archivio.annuncio(10)["esito"] == "corrisponde"
+    assert "Nota: il venditore" in archivio.annuncio(10)["motivo"]

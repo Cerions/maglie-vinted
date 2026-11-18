@@ -174,6 +174,8 @@ def cmd_prova_annuncio(cfg: Config, args) -> int:
     print(f"\nLettura etichetta: {r.lettura}")
     print(f"Prodotto: {r.prodotto}")
     print(f"\nESITO: {r.esito}\n{r.motivo}")
+    if r.nota_annuncio:
+        print(f"Nota sull'annuncio: {r.nota_annuncio}")
     print(f"\nConsumo: {consumo}")
     return 0
 

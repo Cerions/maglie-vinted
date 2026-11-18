@@ -160,3 +160,24 @@ def test_cerca_codice_incompleta_due_volte_si_arrende():
     ai = ai_con([vuoto(), vuoto()])
     assert ai.cerca_codice("CV8413-101", None, "nike") == {"trovato": True}
     assert len(ai.client.messages.chiamate) == 2
+
+
+def test_confronta_manda_le_foto_e_le_regole_sul_testo_del_venditore():
+    ai = ai_con([NS(content=[tool("riporta_verdetto", {"esito": "corrisponde", "taglia_coerente": None,
+                                                       "motivo": "ok", "nota_annuncio": "terza/quarta"})],
+                    stop_reason="tool_use")])
+    r = ai.confronta({"titolo": "Terza maglia Inter"}, {"codice_stile": "CV8413-101"},
+                     {"trovato": True, "tipo_kit": "fourth"}, [(b"a", "image/webp"), (b"b", "image/webp")])
+    assert r["nota_annuncio"] == "terza/quarta"
+    contenuto = ai.client.messages.chiamate[0]["messages"][0]["content"]
+    assert [c["type"] for c in contenuto] == ["text", "image", "text", "image", "text"]
+    regole = contenuto[-1]["text"]
+    assert "prova principale" in regole and "SOLO nel testo" in regole
+
+
+def test_lettura_etichetta_non_riceve_il_titolo():
+    ai = ai_con([NS(content=[tool("riporta_etichetta", {"etichetta_trovata": False, "leggibilita": "scarsa",
+                                                         "descrizione_maglia": ""})], stop_reason="tool_use")])
+    ai.leggi_etichetta([(b"a", "image/jpeg")], {"titolo": "TITOLO_CHE_NON_DEVE_COMPARIRE", "marca": "Nike"})
+    testo = ai.client.messages.chiamate[0]["messages"][0]["content"][-1]["text"]
+    assert "TITOLO_CHE_NON_DEVE_COMPARIRE" not in testo and "Nike" in testo

@@ -40,8 +40,10 @@ CREATE INDEX IF NOT EXISTS idx_annunci_stato ON annunci(stato);
 CREATE INDEX IF NOT EXISTS idx_annunci_esito ON annunci(esito);
 
 CREATE TABLE IF NOT EXISTS ricerche_inizializzate (
-    chiave TEXT PRIMARY KEY,
-    il     TEXT
+    chiave      TEXT PRIMARY KEY,
+    il          TEXT,
+    max_id      INTEGER,   -- ID più alto visto: gli annunci con ID molto più basso sono vecchi
+    ultimo_giro TEXT       -- ultima ricerca riuscita: serve a capire se lo script è rimasto fermo
 );
 
 -- un record per ogni tentativo di analisi (anche quelli falliti: i token li paghi lo stesso)
@@ -75,7 +77,15 @@ class Archivio:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)
+        self._migra()
         self.conn.commit()
+
+    def _migra(self) -> None:
+        """Aggiunge le colonne nuove ai database creati con versioni precedenti."""
+        colonne = {r["name"] for r in self.conn.execute("PRAGMA table_info(ricerche_inizializzate)")}
+        for nome, tipo in (("max_id", "INTEGER"), ("ultimo_giro", "TEXT")):
+            if nome not in colonne:
+                self.conn.execute(f"ALTER TABLE ricerche_inizializzate ADD COLUMN {nome} {tipo}")
 
     def chiudi(self) -> None:
         self.conn.close()
@@ -86,7 +96,23 @@ class Archivio:
         return r is not None
 
     def segna_ricerca_inizializzata(self, chiave: str) -> None:
-        self.conn.execute("INSERT OR IGNORE INTO ricerche_inizializzate VALUES (?, ?)", (chiave, adesso()))
+        self.conn.execute("INSERT OR IGNORE INTO ricerche_inizializzate (chiave, il) VALUES (?, ?)", (chiave, adesso()))
+        self.conn.commit()
+
+    def stato_ricerca(self, chiave: str) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT max_id, ultimo_giro FROM ricerche_inizializzate WHERE chiave=?", (chiave,)
+        ).fetchone()
+
+    def aggiorna_ricerca(self, chiave: str, max_id: int | None) -> None:
+        """Registra un giro riuscito: aggiorna l'ID più alto visto e l'ora dell'ultimo giro."""
+        self.conn.execute(
+            """INSERT INTO ricerche_inizializzate (chiave, il, max_id, ultimo_giro) VALUES (?, ?, ?, ?)
+               ON CONFLICT(chiave) DO UPDATE SET
+                 max_id = MAX(COALESCE(max_id, 0), COALESCE(excluded.max_id, 0)),
+                 ultimo_giro = excluded.ultimo_giro""",
+            (chiave, adesso(), max_id, adesso()),
+        )
         self.conn.commit()
 
     # --- annunci ------------------------------------------------------------

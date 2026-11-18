@@ -29,6 +29,7 @@ class VintedConfig:
     backoff_errore_minuti: float = 1
     backoff_max_minuti: float = 60
     eta_massima_annuncio_minuti: float = 30
+    margine_id_vecchi: int = 1_000_000
     risultati_per_ricerca: int = 20
 
 

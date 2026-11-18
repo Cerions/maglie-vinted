@@ -25,8 +25,11 @@ scanner (ogni 60-120 s, jitter)          analizzatore (in coda, nel DB)
 ```
 
 - **Primo giro di ogni ricerca:** gli annunci già presenti vengono segnati come visti, senza avvisi.
-- **Annunci vecchi** (promossi, o rimasti indietro dopo che il PC era spento): se la foto è stata caricata
-  da più di 30 minuti niente avviso. Si regola con `eta_massima_annuncio_minuti`.
+- **Annunci vecchi:** quelli ripubblicati o promossi ricompaiono tra i "più recenti" ma hanno un ID molto più
+  basso dell'ultimo visto: vengono ignorati (`margine_id_vecchi`). Se lo script resta fermo più di 30 minuti,
+  al giro dopo quello che è uscito nel frattempo viene segnato come visto senza avvisi (`eta_massima_annuncio_minuti`).
+- **Confronto con le foto:** il verdetto si basa sulle foto della maglia, non sul testo del venditore, che
+  sbaglia spesso il nome del kit (terza/quarta, home/away). Gli errori del testo vengono segnalati con 📝.
 - **Backoff:** al primo 403/429 lo scanner butta via la sessione e aspetta 5 minuti, poi 10, 20, 40, fino a 60.
   Dopo 3 errori di fila ti arriva un messaggio 🔴 su Telegram, e uno 🟢 quando Vinted torna a rispondere.
 - Nessun login: lo script usa una sessione anonima, il tuo account Vinted non viene toccato.

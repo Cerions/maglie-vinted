@@ -13,6 +13,8 @@ from .vinted import ClientVinted, estrai_descrizione, estrai_foto_da_pagina
 
 log = logging.getLogger(__name__)
 
+MAX_FOTO_CONFRONTO = 3
+
 
 @dataclass
 class Risultato:
@@ -24,6 +26,7 @@ class Risultato:
     prodotto: dict = field(default_factory=dict)
     lettura: dict = field(default_factory=dict)
     foto_analizzate: int = 0
+    nota_annuncio: str | None = None  # errori nel testo del venditore (es. "terza" invece di "quarta")
 
     @property
     def nome_prodotto(self) -> str:
@@ -94,7 +97,10 @@ def analizza_annuncio(annuncio: dict, foto: list[tuple[bytes, str]], ai: Analist
         return Risultato("incerto", "il codice esiste online ma la ricerca non ha detto a che maglia corrisponde"
                          + nota_upc, prodotto=prodotto, **base)
 
-    verdetto = ai.confronta(annuncio, {**lettura, "codice_stile": cs.codice}, prodotto)
+    # le foto della maglia (non quella dell'etichetta), per il confronto visivo
+    indice_etichetta = lettura.get("indice_foto")
+    foto_maglia = [f for i, f in enumerate(foto, start=1) if i != indice_etichetta][:MAX_FOTO_CONFRONTO]
+    verdetto = ai.confronta(annuncio, {**lettura, "codice_stile": cs.codice}, prodotto, foto_maglia)
     motivo = verdetto.get("motivo", "")
     if verdetto.get("taglia_coerente") is False:
         motivo += " Taglie non coerenti."
@@ -104,13 +110,15 @@ def analizza_annuncio(annuncio: dict, foto: list[tuple[bytes, str]], ai: Analist
     # Un codice a barre di un altro prodotto è un campanello d'allarme: niente "corrisponde"
     if esito == "corrisponde" and (prodotto.get("upc_coerente") is False or verdetto.get("taglia_coerente") is False):
         esito = "incerto"
-    return Risultato(esito, (motivo + nota_upc).strip(), prodotto=prodotto, **base)
+    return Risultato(esito, (motivo + nota_upc).strip(), prodotto=prodotto,
+                     nota_annuncio=verdetto.get("nota_annuncio") or None, **base)
 
 
 # --- messaggi Telegram -----------------------------------------------------
 
 def messaggio_nuovo(annuncio: dict, nome_ricerca: str) -> str:
-    dettagli = " · ".join(x for x in (annuncio.get("prezzo"), annuncio.get("taglia"), annuncio.get("marca")) if x)
+    dettagli = " · ".join(x for x in (annuncio.get("prezzo"), annuncio.get("taglia"), annuncio.get("marca"),
+                                       annuncio.get("condizione")) if x)
     return (
         f"🆕 <b>{e(annuncio.get('titolo'))}</b>\n"
         f"{e(dettagli)}\n"
@@ -148,6 +156,8 @@ def messaggio_esito(r: Risultato, annuncio: dict, con_intestazione_annuncio: boo
         righe.append(f"Il codice è: {e(r.nome_prodotto)}")
     if r.motivo:
         righe.append(e(r.motivo))
+    if r.nota_annuncio:
+        righe.append(f"📝 {e(r.nota_annuncio)}")
     fonti = r.prodotto.get("fonti") or []
     if fonti:
         righe.append(f"<a href=\"{e(fonti[0])}\">Fonte</a>")

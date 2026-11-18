@@ -154,3 +154,45 @@ def test_prova_ricerca_salva_json(tmp_path, monkeypatch, capsys):
     assert main.main(["prova-ricerca", "--ricerca", "maglia", "--salva-json", "risposta.json"]) == 0
     assert json.loads((tmp_path / "risposta.json").read_text(encoding="utf-8")) == grezzo
     assert "10.0 EUR" in capsys.readouterr().out
+
+
+def test_normalizza_annuncio_dalla_ricerca_attuale():
+    # forma reale della risposta di /svc-catalogue/items (novembre 2026), dati inventati
+    raw = {"id": 10868879602, "title": "Maglia Real Madrid 2013/2014",
+           "price": {"amount": "5.00", "currency_code": "EUR"},
+           "item_box": {"first_line": "adidas", "second_line": "XS · Buone",
+                        "accessibility_label": "Maglia Real Madrid 2013/2014, Brand: adidas, Condizioni: Buone, "
+                                               "Taglia: XS, 5.00 €, 5.95 €"},
+           "photo": {"url": "https://images1.vinted.net/t/A/f800/x.webp?s=1",
+                     "full_size_url": "https://images1.vinted.net/tc/A/x.webp?s=2",
+                     "high_resolution": {"id": "A", "orientation": 0}},
+           "url": "/items/10868879602-maglia"}
+    a = normalizza_annuncio(raw, "https://www.vinted.it")
+    assert (a["marca"], a["taglia"], a["condizione"]) == ("adidas", "XS", "Buone")
+    assert a["url"] == "https://www.vinted.it/items/10868879602-maglia"
+    assert a["foto_principale"].endswith("/f800/x.webp?s=1")
+    assert a["timestamp"] is None
+
+
+def test_normalizza_annuncio_taglia_bambino_solo_second_line():
+    raw = {"id": 1, "item_box": {"first_line": "Puma", "second_line": "5 anni / 110 cm · Buone"}}
+    a = normalizza_annuncio(raw, "https://www.vinted.it")
+    assert (a["marca"], a["taglia"], a["condizione"]) == ("Puma", "5 anni / 110 cm", "Buone")
+
+
+def test_migrazione_db_vecchio(tmp_path):
+    import sqlite3
+
+    from maglie.db import Archivio
+
+    percorso = tmp_path / "vecchio.db"
+    c = sqlite3.connect(percorso)
+    c.execute("CREATE TABLE ricerche_inizializzate (chiave TEXT PRIMARY KEY, il TEXT)")
+    c.execute("INSERT INTO ricerche_inizializzate VALUES ('r', '2026-11-18T10:00:00+00:00')")
+    c.commit()
+    c.close()
+    a = Archivio(percorso)
+    assert a.stato_ricerca("r")["max_id"] is None
+    a.aggiorna_ricerca("r", 500)
+    a.aggiorna_ricerca("r", 300)  # non scende mai
+    assert a.stato_ricerca("r")["max_id"] == 500 and a.stato_ricerca("r")["ultimo_giro"]

@@ -12,6 +12,7 @@ import logging
 import random
 import threading
 import time
+from datetime import datetime, timezone
 
 from .analisi import analizza_annuncio, messaggio_esito, messaggio_nuovo, raccogli_foto
 from .config import Config, Ricerca
@@ -34,6 +35,16 @@ def eta_minuti(annuncio: dict, ora: float | None = None) -> float | None:
     return ((ora or time.time()) - ts) / 60
 
 
+def minuti_da(iso: str | None) -> float | None:
+    if not iso:
+        return None
+    try:
+        t = datetime.fromisoformat(iso)
+    except ValueError:
+        return None
+    return (datetime.now(timezone.utc) - t).total_seconds() / 60
+
+
 def attesa_backoff(cfg: Config, fallimenti: int, bloccato: bool) -> float:
     base = cfg.vinted.backoff_blocco_minuti if bloccato else cfg.vinted.backoff_errore_minuti
     minuti = min(base * 2 ** (fallimenti - 1), cfg.vinted.backoff_max_minuti)
@@ -53,33 +64,44 @@ class Scanner:
         params = parametri_da_ricerca(ricerca.url, self.cfg.vinted.risultati_per_ricerca)
         annunci = self.client.cerca(params)
         chiave = ricerca.url
+        v = self.cfg.vinted
+        max_pagina = max((a["id"] for a in annunci), default=None)
 
-        if not archivio.ricerca_inizializzata(chiave):
-            # Primo giro di questa ricerca: segno tutto come già visto, niente avvisi
+        stato = archivio.stato_ricerca(chiave)
+        pausa = minuti_da(stato["ultimo_giro"]) if stato is not None else None
+        if stato is None or pausa is None or pausa > v.eta_massima_annuncio_minuti:
+            # Primo giro, oppure lo script è rimasto fermo (PC spento, blocco di Vinted):
+            # segno tutto come già visto, niente avvisi su annunci usciti mentre non guardavamo
             for a in annunci:
                 archivio.inserisci_annuncio(a, ricerca.nome, "baseline")
-            archivio.segna_ricerca_inizializzata(chiave)
-            log.info("[%s] prima scansione: %d annunci esistenti ignorati, da ora avviso solo i nuovi",
-                     ricerca.nome, len(annunci))
+            archivio.aggiorna_ricerca(chiave, max_pagina)
+            motivo = "prima scansione" if stato is None else (
+                f"fermo da {pausa:.0f} min" if pausa is not None else "ripartenza")
+            log.info("[%s] %s: %d annunci presenti segnati come visti, da ora avviso solo i nuovi",
+                     ricerca.nome, motivo, len(annunci))
             return 0
 
+        max_visto = stato["max_id"] or 0
         visti = archivio.ids_gia_visti([a["id"] for a in annunci])
         nuovi = sorted((a for a in annunci if a["id"] not in visti), key=lambda a: a["id"])
         in_coda = 0
         for a in nuovi:
             eta = eta_minuti(a)
-            if eta is not None and eta > self.cfg.vinted.eta_massima_annuncio_minuti:
-                # annuncio vecchio (promosso o riapparso dopo un riavvio): non è una novità
+            vecchio_per_id = max_visto and a["id"] < max_visto - v.margine_id_vecchi
+            if vecchio_per_id or (eta is not None and eta > v.eta_massima_annuncio_minuti):
+                # annuncio "ripubblicato" o promosso: per noi è nuovo, ma è in vendita da tempo
                 archivio.inserisci_annuncio(a, ricerca.nome, "vecchio")
+                log.debug("[%s] ignoro annuncio vecchio %s (%s)", ricerca.nome, a["id"], a["titolo"])
                 continue
             if not archivio.inserisci_annuncio(a, ricerca.nome, "in_coda"):
                 continue
             in_coda += 1
-            log.info("[%s] NUOVO: %s · %s · %s", ricerca.nome, a["titolo"], a["prezzo"], a["url"])
+            log.info("[%s] NUOVO: %s · %s · %s · %s", ricerca.nome, a["titolo"], a["prezzo"], a["taglia"], a["url"])
             if self.cfg.telegram.avviso_immediato:
                 mid = self.telegram.invia(messaggio_nuovo(a, ricerca.nome), foto=a.get("foto_principale") or None)
                 archivio.imposta_tg_message_id(a["id"], mid)
             self.sveglia.set()
+        archivio.aggiorna_ricerca(chiave, max_pagina)
         return in_coda
 
     def esegui(self) -> None:
@@ -161,7 +183,7 @@ class Analizzatore:
         archivio.salva_esito(
             riga["id"], risultato.esito, codice_stile=risultato.codice_stile, upc=risultato.upc,
             taglia_etichetta=risultato.taglia_etichetta, prodotto=risultato.nome_prodotto or None,
-            motivo=risultato.motivo,
+            motivo=risultato.motivo + (f" Nota: {risultato.nota_annuncio}" if risultato.nota_annuncio else ""),
         )
         log.info("Esito %s: %s %s · %s · %s", riga["id"], risultato.esito, risultato.codice_stile or "",
                  self._registra_consumo(archivio, riga["id"]), risultato.motivo)

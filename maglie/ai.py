@@ -160,6 +160,9 @@ TOOL_PRODOTTO = {
             "stagione": {"type": ["string", "null"], "description": "Es. 2020/21"},
             "tipo_kit": {"type": ["string", "null"], "description": "home, away, third, portiere, allenamento, altro"},
             "colori": {"type": ["string", "null"]},
+            "aspetto": {"type": ["string", "null"],
+                        "description": "Com'è fatta la maglia secondo le fonti: colore base, grafica/pattern, "
+                                       "sponsor, colletto, dettagli riconoscibili."},
             "versione": {"type": ["string", "null"], "description": "stadium/replica, vapor/match/authentic, se indicato"},
             "taglia_da_upc": {"type": ["string", "null"], "description": "Taglia associata al codice a barre, solo se una fonte la riporta."},
             "upc_coerente": {"type": ["boolean", "null"], "description": "Il codice a barre risulta associato allo stesso prodotto? null se non verificabile."},
@@ -167,7 +170,7 @@ TOOL_PRODOTTO = {
             "note": {"type": "string"},
         },
         # tutti obbligatori (null se non noti): così il modello non può rispondere solo {"trovato": true}
-        "required": ["trovato", "nome_prodotto", "squadra", "stagione", "tipo_kit", "colori", "versione",
+        "required": ["trovato", "nome_prodotto", "squadra", "stagione", "tipo_kit", "colori", "aspetto", "versione",
                      "taglia_da_upc", "upc_coerente", "fonti", "note"],
     },
 }
@@ -179,10 +182,14 @@ TOOL_VERDETTO = {
         "type": "object",
         "properties": {
             "esito": {"type": "string", "enum": ["corrisponde", "non_corrisponde", "incerto"]},
-            "taglia_coerente": {"type": ["boolean", "null"]},
+            "taglia_coerente": {"type": ["boolean", "null"],
+                                "description": "false solo se due taglie note sono in conflitto; null se mancano dati."},
             "motivo": {"type": "string", "description": "Una o due frasi, in italiano."},
+            "nota_annuncio": {"type": ["string", "null"],
+                              "description": "Errori nel testo del venditore (es. la chiama terza maglia ma è la "
+                                             "quarta), null se non ce ne sono."},
         },
-        "required": ["esito", "motivo"],
+        "required": ["esito", "taglia_coerente", "motivo", "nota_annuncio"],
     },
 }
 
@@ -244,12 +251,13 @@ class AnalistaAI:
                 "type": "base64", "media_type": tipo, "data": base64.b64encode(dati).decode()}})
         contenuto.append({"type": "text", "text": (
             "Queste sono le foto di un annuncio Vinted di una maglia da calcio.\n"
-            f"Titolo: {annuncio.get('titolo')}\nMarca dichiarata: {annuncio.get('marca')}\n\n"
+            f"Marca dichiarata: {annuncio.get('marca')}\n\n"
             "Cerca la foto dell'etichetta interna con i codici (di solito una piccola etichetta bianca "
             "con codice articolo tipo CV8413-101 e un codice a barre numerico). Trascrivi i codici "
             "carattere per carattere: se una cifra non è leggibile con sicurezza, scrivi null invece "
             "di indovinare. Non confondere l'etichetta di composizione/lavaggio con quella dei codici. "
-            "Descrivi anche la maglia mostrata nelle altre foto."
+            "Descrivi anche la maglia mostrata nelle altre foto, SOLO in base a ciò che vedi (stemma, "
+            "colori, grafica, sponsor, colletto): non dedurre stagione o tipo di kit da testi o supposizioni."
         )})
         r = self._crea(
             model=self.modello, max_tokens=1024, tools=[TOOL_ETICHETTA],
@@ -307,22 +315,37 @@ class AnalistaAI:
         return {"trovato": False, "fonti": [], "note": "nessuna risposta strutturata"}
 
     # 3) Confronto annuncio <-> prodotto --------------------------------------
-    def confronta(self, annuncio: dict, lettura: dict, prodotto: dict) -> dict:
-        testo = (
+    def confronta(self, annuncio: dict, lettura: dict, prodotto: dict,
+                  foto_maglia: list[tuple[bytes, str]] | None = None) -> dict:
+        contenuto: list[dict] = []
+        for i, (dati, tipo) in enumerate(foto_maglia or [], start=1):
+            contenuto.append({"type": "text", "text": f"Foto della maglia in vendita {i}:"})
+            contenuto.append({"type": "image", "source": {
+                "type": "base64", "media_type": tipo, "data": base64.b64encode(dati).decode()}})
+        contenuto.append({"type": "text", "text": (
             "Devi dire se il codice sull'etichetta corrisponde alla maglia venduta nell'annuncio.\n\n"
-            f"ANNUNCIO\nTitolo: {annuncio.get('titolo')}\nDescrizione: {annuncio.get('descrizione')}\n"
-            f"Marca: {annuncio.get('marca')}\nTaglia annuncio: {annuncio.get('taglia')}\n"
-            f"Cosa si vede nelle foto: {lettura.get('descrizione_maglia')}\n"
+            f"PRODOTTO DEL CODICE {lettura.get('codice_stile')} (dalle fonti web)\n{prodotto}\n\n"
+            "MAGLIA IN VENDITA\n"
+            + ("Le foto qui sopra sono la prova principale.\n" if foto_maglia else "")
+            + f"Descrizione delle foto: {lettura.get('descrizione_maglia')}\n"
             f"Taglia sull'etichetta: {lettura.get('taglia_etichetta')}\n\n"
-            f"PRODOTTO DEL CODICE {lettura.get('codice_stile')}\n{prodotto}\n\n"
-            "'corrisponde' = squadra, stagione/tipo di kit e colori del codice sono coerenti con la "
-            "maglia dell'annuncio. 'non_corrisponde' = il codice appartiene chiaramente a un'altra "
-            "maglia (altra squadra, altra stagione, altro kit o colore). 'incerto' = dati insufficienti. "
-            "Controlla anche che taglia etichetta, taglia annuncio ed eventuale taglia da UPC siano coerenti."
-        )
+            f"TESTO DEL VENDITORE (può contenere errori)\nTitolo: {annuncio.get('titolo')}\n"
+            f"Descrizione: {annuncio.get('descrizione')}\nMarca: {annuncio.get('marca')}\n"
+            f"Taglia annuncio: {annuncio.get('taglia')}\n\n"
+            "Regole:\n"
+            "- 'corrisponde': la maglia nelle FOTO è quella del codice (stessa squadra, stessa grafica e colori "
+            "descritti dalle fonti).\n"
+            "- 'non_corrisponde': le FOTO mostrano una maglia diversa da quella del codice (altra squadra, "
+            "altra grafica, altri colori, altro sponsor).\n"
+            "- 'incerto': le foto non bastano per decidere.\n"
+            "- Il testo del venditore sbaglia spesso il nome del kit (terza/quarta, home/away, stagione): "
+            "una differenza SOLO nel testo non è un motivo per 'non_corrisponde'. Segnalala in nota_annuncio.\n"
+            "- Dati mancanti (taglia annuncio vuota, nessuna taglia associata al codice a barre) non sono "
+            "conflitti: in quel caso taglia_coerente = null."
+        )})
         r = self._crea(
-            model=self.modello, max_tokens=512, tools=[TOOL_VERDETTO],
+            model=self.modello, max_tokens=700, tools=[TOOL_VERDETTO],
             tool_choice={"type": "tool", "name": "riporta_verdetto"},
-            messages=[{"role": "user", "content": testo}],
+            messages=[{"role": "user", "content": contenuto}],
         )
         return _tool_input(r, "riporta_verdetto") or {"esito": "incerto", "motivo": "nessuna risposta"}

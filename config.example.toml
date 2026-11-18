@@ -13,9 +13,12 @@ backoff_blocco_minuti = 5
 # Errori di rete (PC offline, timeout): si parte da 1 minuto
 backoff_errore_minuti = 1
 backoff_max_minuti = 60
-# Annunci "nuovi" per lo script ma con la foto caricata da più di N minuti
-# (promossi, o rimasti indietro dopo un riavvio) non generano avvisi
+# Se lo script resta fermo più di N minuti (PC spento, blocco di Vinted), al giro dopo
+# gli annunci usciti nel frattempo vengono segnati come visti senza avvisi
 eta_massima_annuncio_minuti = 30
+# Annunci ripubblicati/promossi: compaiono tra i "più recenti" ma hanno un ID molto più basso
+# dell'ultimo visto. Sotto questo margine sono considerati vecchi (1.000.000 di ID ≈ circa un'ora su Vinted)
+margine_id_vecchi = 1000000
 risultati_per_ricerca = 20
 
 # Le ricerche: filtra su vinted.it dal browser (categoria, marca, taglia, prezzo),

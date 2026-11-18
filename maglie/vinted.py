@@ -106,9 +106,19 @@ def _prezzo(raw) -> str:
     return str(raw) if raw is not None else ""
 
 
+def _da_etichetta_accessibile(testo: str, campo: str) -> str:
+    # "..., Brand: adidas, Condizioni: Buone, Taglia: XS, 5.00 €, ..."
+    m = re.search(rf"{campo}:\s*([^,]+)", testo or "")
+    return m.group(1).strip() if m else ""
+
+
 def normalizza_annuncio(raw: dict, dominio: str) -> dict:
     foto = raw.get("photo") or {}
     alta = foto.get("high_resolution") or {}
+    box = raw.get("item_box") or {}
+    etichetta = box.get("accessibility_label") or ""
+    # second_line = "L · Ottime" oppure "5 anni / 110 cm · Buone"
+    parti = [p.strip() for p in (box.get("second_line") or "").split("·")]
     url = raw.get("url") or f"{dominio}/items/{raw['id']}"
     if url.startswith("/"):
         url = dominio + url
@@ -117,11 +127,14 @@ def normalizza_annuncio(raw: dict, dominio: str) -> dict:
         "titolo": raw.get("title") or "",
         "descrizione": raw.get("description") or "",
         "prezzo": _prezzo(raw.get("price")),
-        "taglia": raw.get("size_title") or "",
-        "marca": raw.get("brand_title") or "",
+        "taglia": raw.get("size_title") or _da_etichetta_accessibile(etichetta, "Taglia") or (parti[0] if parti[0] else ""),
+        "marca": raw.get("brand_title") or box.get("first_line") or _da_etichetta_accessibile(etichetta, "Brand"),
+        "condizione": raw.get("status") if isinstance(raw.get("status"), str) else (
+            _da_etichetta_accessibile(etichetta, "Condizioni") or (parti[1] if len(parti) > 1 else "")),
         "url": url,
-        "foto_principale": foto.get("full_size_url") or foto.get("url") or "",
-        # timestamp di caricamento della foto principale: approssima l'età dell'annuncio
+        "foto_principale": foto.get("url") or foto.get("full_size_url") or "",
+        # Vinted non dà più l'orario della foto nella ricerca: se c'è lo usiamo, altrimenti
+        # gli annunci vecchi si riconoscono dall'ID (vedi Scanner)
         "timestamp": alta.get("timestamp"),
         "promosso": bool(raw.get("promoted")),
     }
