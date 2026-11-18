@@ -13,9 +13,38 @@ import threading
 from urllib.parse import parse_qsl, urlparse
 
 import httpx
+import httpx._decoders
+import vinted_scraper._base_wrapper as _vs_base
 from vinted_scraper import VintedWrapper
 
 log = logging.getLogger(__name__)
+
+
+def _accept_encoding_supportati() -> str:
+    """Le compressioni che httpx sa davvero decodificare su questo PC.
+
+    vinted_scraper chiede sempre "gzip, deflate, br, zstd". Se il modulo `brotli` non si carica
+    (es. Windows con il Controllo intelligente delle app, che blocca le DLL non firmate) o manca
+    il supporto zstd, il server potrebbe rispondere in un formato che httpx non sa leggere.
+    """
+    return ", ".join(c for c in ("gzip", "deflate", "br", "zstd") if c in httpx._decoders.SUPPORTED_DECODERS)
+
+
+def _correggi_header(funzione):
+    def avvolta(*args, **kwargs):
+        h = funzione(*args, **kwargs)
+        if "Accept-Encoding" in h:
+            h["Accept-Encoding"] = _accept_encoding_supportati()
+        return h
+    return avvolta
+
+
+# vinted_scraper costruisce gli header con queste due funzioni: le avvolgiamo una volta sola
+if not getattr(_vs_base.get_cookie_headers, "_corretta", False):
+    for _nome in ("get_cookie_headers", "get_curl_headers"):
+        _f = _correggi_header(getattr(_vs_base, _nome))
+        _f._corretta = True
+        setattr(_vs_base, _nome, _f)
 
 STATUS_BLOCCO = {403, 429}
 

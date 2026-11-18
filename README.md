@@ -39,20 +39,27 @@ Serve Python 3.11 o più recente.
 cd vinted-maglie
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 copy config.example.toml config.toml
 copy .env.example .env
 ```
 
+Usa `python -m pip` e non `pip`: con il **Controllo intelligente delle app** di Windows attivo, `pip.exe`
+nel venv viene bloccato perché non è firmato. Per lo stesso motivo il progetto evita le librerie con
+moduli compilati: anche la chiamata a Claude è fatta con httpx, senza l'SDK `anthropic`.
+
 ### Chiave Anthropic
-Mettila in `.env` come `ANTHROPIC_API_KEY`. La ricerca web va abilitata dall'admin
-dell'organizzazione nella Console Anthropic (impostazioni privacy), altrimenti la verifica del
-codice fallisce.
+Creala nella Console Anthropic (platform.claude.com → Settings → API keys → Create key → "Somewhere else")
+e mettila in `.env` come `ANTHROPIC_API_KEY`. Serve anche credito prepagato (Billing).
+
+La verifica del codice usa la ricerca web di Claude: controlla che in Settings → Capabilities
+"Allow web search" sia attivo (di solito lo è già), altrimenti le analisi falliscono.
 
 ### Bot Telegram
 1. Su Telegram scrivi a **@BotFather** → `/newbot` → copia il token in `.env` (`TELEGRAM_BOT_TOKEN`).
 2. Manda un messaggio qualsiasi al tuo bot.
 3. `python main.py telegram-chat-id` → copia il numero in `.env` (`TELEGRAM_CHAT_ID`).
+4. `python main.py telegram-prova` → ti arriva un messaggio di prova.
 
 Senza Telegram lo script funziona lo stesso: gli avvisi finiscono solo nel log.
 
@@ -139,7 +146,7 @@ La ricerca su Vinted non costa nulla: si paga solo l'analisi degli annunci nuovi
 ## Struttura
 
 ```
-main.py              comandi (avvia, prova-ricerca, prova-annuncio, lista, costi, telegram-chat-id)
+main.py              comandi (avvia, prova-ricerca, prova-annuncio, lista, costi, telegram-chat-id, telegram-prova)
 maglie/config.py     config.toml + .env
 maglie/vinted.py     tutto ciò che tocca Vinted (ricerca, pagina annuncio, foto)
 maglie/servizio.py   scanner e analizzatore (thread), jitter e backoff

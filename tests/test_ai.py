@@ -93,3 +93,45 @@ def test_consumo_accumulato_dalle_risposte():
     assert c.costo == pytest.approx(costo_richiesta(Prezzi(), 9000, 300, 0) + costo_richiesta(Prezzi(), 20000, 400, 2))
     assert str(c) == "29.000 in / 700 out · 2 ricerche web · $0.0232"
     assert not ai.prendi_consumo()  # azzerato
+
+
+def test_client_httpx_riprova_e_restituisce_oggetti(monkeypatch):
+    import httpx
+
+    from maglie import ai as modulo
+
+    risposte = [
+        httpx.Response(529, json={"error": {"message": "Overloaded"}}),
+        httpx.Response(200, json={"content": [{"type": "tool_use", "name": "riporta_verdetto",
+                                               "input": {"esito": "incerto", "motivo": "x"}}],
+                                  "stop_reason": "tool_use",
+                                  "usage": {"input_tokens": 100, "output_tokens": 10,
+                                            "server_tool_use": {"web_search_requests": 1}}}),
+    ]
+    inviati = []
+
+    def post(url, json, headers):
+        inviati.append((url, json, headers))
+        return risposte.pop(0)
+
+    monkeypatch.setattr(modulo.time, "sleep", lambda s: None)
+    ai = AnalistaAI("sk-test", "claude-haiku-5-5")
+    monkeypatch.setattr(ai.client.http, "post", post)
+    r = ai.confronta({}, {}, {})
+    assert r == {"esito": "incerto", "motivo": "x"}
+    assert len(inviati) == 2
+    assert inviati[0][2]["x-api-key"] == "sk-test" and inviati[0][2]["anthropic-version"] == "2023-06-01"
+    c = ai.prendi_consumo()
+    assert (c.token_in, c.token_out, c.ricerche_web) == (100, 10, 1)
+
+
+def test_client_httpx_errore_definitivo(monkeypatch):
+    import httpx
+
+    from maglie import ai as modulo
+
+    ai = AnalistaAI("sk-bad", "claude-haiku-5-5")
+    monkeypatch.setattr(ai.client.http, "post",
+                        lambda url, json, headers: httpx.Response(401, json={"error": {"message": "invalid x-api-key"}}))
+    with pytest.raises(modulo.ErroreAPI, match="401: invalid x-api-key"):
+        ai.confronta({}, {}, {})

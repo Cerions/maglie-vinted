@@ -5,6 +5,7 @@ Comandi:
   python main.py prova-ricerca [--ricerca URL_O_TESTO]
   python main.py prova-annuncio URL_O_ID [--ai]
   python main.py telegram-chat-id
+  python main.py telegram-prova
   python main.py lista [--tutti] [--csv FILE]
   python main.py costi [--giorni N]
 """
@@ -39,7 +40,7 @@ def configura_log(cfg: Config, verboso: bool = False) -> None:
     radice.setLevel(logging.DEBUG if verboso else logging.INFO)
     radice.addHandler(console)
     radice.addHandler(file)
-    for rumoroso in ("httpx", "httpcore", "anthropic", "vinted_scraper"):
+    for rumoroso in ("httpx", "httpcore", "vinted_scraper"):
         logging.getLogger(rumoroso).setLevel(logging.DEBUG if verboso else logging.WARNING)
 
 
@@ -184,6 +185,19 @@ def cmd_telegram_chat_id(cfg: Config, args) -> int:
     return 0
 
 
+def cmd_telegram_prova(cfg: Config, args) -> int:
+    if not (cfg.telegram.bot_token and cfg.telegram.chat_id):
+        print("Mancano TELEGRAM_BOT_TOKEN e/o TELEGRAM_CHAT_ID nel file .env")
+        return 1
+    mid = Telegram(cfg.telegram.bot_token, cfg.telegram.chat_id).invia(
+        "✅ <b>Vinted Maglie collegato</b>\nDa ora qui arrivano gli avvisi.")
+    if mid is None:
+        print("Invio fallito: controlla token e chat_id (i dettagli sono nel log qui sopra)")
+        return 1
+    print("Messaggio inviato: controlla Telegram")
+    return 0
+
+
 def cmd_lista(cfg: Config, args) -> int:
     archivio = Archivio(cfg.percorso_db)
     esiti = ("corrisponde", "incerto", "non_corrisponde", "codice_non_trovato", "codice_anomalo") if args.tutti else ("corrisponde",)
@@ -234,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("annuncio", help="URL o ID dell'annuncio")
     s.add_argument("--ai", action="store_true", help="Esegue anche l'analisi completa (costa una chiamata API)")
     sub.add_parser("telegram-chat-id", help="Trova il chat_id da mettere nel .env")
+    sub.add_parser("telegram-prova", help="Manda un messaggio di prova al bot")
     s = sub.add_parser("lista", help="Mostra le maglie con etichetta OK")
     s.add_argument("--tutti", action="store_true", help="Include anche gli esiti dubbi e negativi")
     s.add_argument("--csv", help="Esporta in CSV")
@@ -247,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
     configura_log(cfg, args.verboso)
     comandi = {
         "avvia": cmd_avvia, "prova-ricerca": cmd_prova_ricerca, "prova-annuncio": cmd_prova_annuncio,
-        "telegram-chat-id": cmd_telegram_chat_id, "lista": cmd_lista, "costi": cmd_costi,
+        "telegram-chat-id": cmd_telegram_chat_id, "telegram-prova": cmd_telegram_prova, "lista": cmd_lista, "costi": cmd_costi,
     }
     return comandi[args.comando](cfg, args)
 

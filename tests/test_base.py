@@ -109,3 +109,35 @@ def test_comando_costi(tmp_path, monkeypatch, capsys):
     assert main.main(["costi"]) == 0
     out = capsys.readouterr().out
     assert "39.000" in out and "0.0245" in out
+
+
+def test_accept_encoding_solo_formati_decodificabili(monkeypatch):
+    import httpx._decoders
+    import vinted_scraper._base_wrapper as base
+
+    import maglie.vinted  # noqa: F401  (applica la correzione)
+
+    h = base.get_cookie_headers("https://www.vinted.it", "UA", "it-IT")
+    assert "zstd" not in h["Accept-Encoding"] or "zstd" in httpx._decoders.SUPPORTED_DECODERS
+    # simula brotli bloccato
+    monkeypatch.setattr(httpx._decoders, "SUPPORTED_DECODERS",
+                        {k: v for k, v in httpx._decoders.SUPPORTED_DECODERS.items() if k != "br"})
+    h = base.get_cookie_headers("https://www.vinted.it", "UA", "it-IT")
+    assert h["Accept-Encoding"] == "gzip, deflate"
+
+
+def test_comando_telegram_prova(tmp_path, monkeypatch, capsys):
+    import main
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    assert main.main(["telegram-prova"]) == 1
+    assert "Mancano" in capsys.readouterr().out
+
+    inviati = []
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:abc")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
+    monkeypatch.setattr(main.Telegram, "_chiama", lambda self, metodo, dati: inviati.append((metodo, dati)) or {"message_id": 7})
+    assert main.main(["telegram-prova"]) == 0
+    assert inviati[0][0] == "sendMessage" and inviati[0][1]["chat_id"] == "42"

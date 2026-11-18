@@ -8,11 +8,91 @@ from __future__ import annotations
 
 import base64
 import logging
+import random
+import time
 from dataclasses import dataclass
 
-import anthropic
+import httpx
 
 log = logging.getLogger(__name__)
+
+API_URL = "https://api.anthropic.com/v1/messages"
+API_VERSION = "2023-06-01"
+STATUS_DA_RIPROVARE = {408, 409, 429, 500, 502, 503, 504, 529}
+
+
+class ErroreAPI(Exception):
+    def __init__(self, messaggio: str, status: int | None = None):
+        super().__init__(messaggio)
+        self.status = status
+
+
+class Oggetto(dict):
+    """dict con accesso anche come attributo (r.content, blocco.type, uso.input_tokens...).
+
+    Resta un dict, quindi i blocchi della risposta si possono rimandare all'API così come sono.
+    """
+
+    def __getattr__(self, nome):
+        try:
+            return self[nome]
+        except KeyError:
+            raise AttributeError(nome) from None
+
+
+def _in_oggetti(x):
+    if isinstance(x, dict):
+        return Oggetto({k: _in_oggetti(v) for k, v in x.items()})
+    if isinstance(x, list):
+        return [_in_oggetti(v) for v in x]
+    return x
+
+
+class _Messaggi:
+    def __init__(self, client: "ClientClaude"):
+        self._c = client
+
+    def create(self, **corpo):
+        return self._c.richiesta(corpo)
+
+
+class ClientClaude:
+    """Client minimo per la Messages API, solo httpx.
+
+    Sostituisce l'SDK ufficiale `anthropic`, che richiede moduli compilati (jiter, pydantic-core)
+    che il Controllo intelligente delle app di Windows blocca.
+    """
+
+    def __init__(self, api_key: str, max_tentativi: int = 4, timeout: float = 180):
+        self.api_key = api_key
+        self.max_tentativi = max_tentativi
+        self.http = httpx.Client(timeout=timeout)
+        self.messages = _Messaggi(self)
+
+    def richiesta(self, corpo: dict) -> Oggetto:
+        intestazioni = {"x-api-key": self.api_key, "anthropic-version": API_VERSION,
+                        "content-type": "application/json"}
+        for tentativo in range(1, self.max_tentativi + 1):
+            try:
+                r = self.http.post(API_URL, json=corpo, headers=intestazioni)
+            except httpx.HTTPError as ex:
+                if tentativo == self.max_tentativi:
+                    raise ErroreAPI(f"Errore di rete verso l'API: {ex}") from ex
+                time.sleep(2 ** tentativo + random.random())
+                continue
+            if r.status_code == 200:
+                return _in_oggetti(r.json())
+            try:
+                dettaglio = r.json().get("error", {}).get("message", r.text)
+            except ValueError:
+                dettaglio = r.text
+            if r.status_code in STATUS_DA_RIPROVARE and tentativo < self.max_tentativi:
+                attesa = float(r.headers.get("retry-after", 0) or 0) or 2 ** tentativo + random.random()
+                log.warning("API %s (%s): riprovo tra %.0f s", r.status_code, dettaglio, attesa)
+                time.sleep(min(attesa, 60))
+                continue
+            raise ErroreAPI(f"API {r.status_code}: {dettaglio}", r.status_code)
+        raise ErroreAPI("API: tentativi esauriti")
 
 
 @dataclass
@@ -116,7 +196,7 @@ class AnalistaAI:
     def __init__(self, api_key: str, modello: str, ricerche_web: int = 3, prezzi: Prezzi | None = None):
         if not api_key:
             raise ValueError("Manca ANTHROPIC_API_KEY nel file .env")
-        self.client = anthropic.Anthropic(api_key=api_key, max_retries=3)
+        self.client = ClientClaude(api_key)
         self.modello = modello
         self.ricerche_web = ricerche_web
         self.prezzi = prezzi or Prezzi()
