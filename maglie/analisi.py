@@ -76,7 +76,9 @@ def raccogli_foto(client: ClientVinted, annuncio: dict, max_foto: int) -> list[t
     return foto
 
 
-ESITI_DA_VALUTARE_PREZZO = {"corrisponde", "incerto", "visivo_originale", "visivo_dubbia"}
+# il prezzo si controlla solo per le maglie che hanno passato il controllo: su dubbie e incerte
+# una ricerca web (qualche centesimo) quasi mai vale la pena
+ESITI_DA_VALUTARE_PREZZO = {"corrisponde", "visivo_originale"}
 GIUDIZIO_VISIVO = {
     "probabile_originale": "visivo_originale",
     "dubbia": "visivo_dubbia",

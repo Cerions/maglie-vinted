@@ -384,3 +384,25 @@ def test_esito_e_prezzo_salvati_nel_db(ambiente):
     an.elabora(archivio, archivio.prossimo_in_coda())
     r = archivio.annuncio(10)
     assert r["giudizio_prezzo"] == "sotto" and r["prezzo_tipico"] == "40 €–60 €"  # 25 € contro 40-60 €
+
+
+def test_parola_esclusa():
+    from maglie.servizio import parola_esclusa
+
+    parole = ["felpa", "tuta", "k-way", "tracksuit"]
+    assert parola_esclusa("Felpa Sassuolo calcio Puma", parole) == "felpa"
+    assert parola_esclusa("Nike Barcelona TRACKSUIT vintage", parole) == "tracksuit"
+    assert parola_esclusa("K-Way Inter", parole) == "k-way"
+    assert parola_esclusa("Maglia tutta originale", parole) is None  # "tutta" non è "tuta"
+    assert parola_esclusa("Maglia Inter 2009/10", parole) is None
+    assert parola_esclusa("Maglia", []) is None
+
+
+def test_annuncio_con_parola_esclusa_niente_avviso_niente_analisi(ambiente):
+    cfg, client, tg, _, sveglia, archivio, scanner = ambiente
+    client.risultati = []
+    scanner.giro_ricerca(archivio, cfg.ricerche[0])
+    client.risultati = [annuncio_raw(20) | {"titolo": "Felpa Inter allenamento"}, annuncio_raw(21)]
+    assert scanner.giro_ricerca(archivio, cfg.ricerche[0]) == 1
+    assert archivio.annuncio(20)["stato"] == "escluso"
+    assert len(tg.messaggi) == 1 and "Maglia 21" in tg.messaggi[0]["testo"]

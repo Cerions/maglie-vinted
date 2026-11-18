@@ -52,7 +52,7 @@ def crea_ai(cfg: Config):
     a = cfg.analisi
     prezzi = Prezzi(a.prezzo_input_mtok, a.prezzo_output_mtok, a.prezzo_ricerca_web,
                     a.soglia_prompt_lungo, a.prezzo_input_mtok_lungo, a.prezzo_output_mtok_lungo)
-    return AnalistaAI(cfg.anthropic_api_key, a.modello, a.ricerche_web_per_codice, prezzi)
+    return AnalistaAI(cfg.anthropic_api_key, a.modello, a.ricerche_web_per_codice, prezzi, a.ricerche_web_per_prezzi)
 
 
 def aggiungi_ricerche(cfg: Config, extra: list[str] | None) -> None:

@@ -214,3 +214,12 @@ def test_config_controllo_prezzo_non_valido(tmp_path):
     (tmp_path / "config.toml").write_text('[analisi]\ncontrollo_prezzo = "a volte"\n', encoding="utf-8")
     with pytest.raises(ValueError, match="controllo_prezzo"):
         carica_config(tmp_path / "config.toml")
+
+
+def test_ricerche_prezzi_limitate_separatamente():
+    ai = AnalistaAI("sk-test", "claude-haiku-5-5", ricerche_web=2, ricerche_web_prezzi=1)
+    ai.client = NS(messages=MessaggiFinti([NS(content=[tool("riporta_prezzi", {"usato_min_eur": None})],
+                                              stop_reason="tool_use")]))
+    ai.cerca_prezzi("Inter", {})
+    chiamata = ai.client.messages.chiamate[0]
+    assert chiamata["tools"][0]["max_uses"] == 1 and "al massimo 1 ricerche" in chiamata["messages"][0]["content"]

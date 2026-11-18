@@ -160,3 +160,10 @@ def test_cache_codice_scade(archivio):
     archivio.conn.execute("UPDATE cache_codici SET il='2026-01-01T00:00:00+00:00'")
     assert archivio.cache_codice("k", 7) is None
     assert archivio.cache_codice("k") == {"a": 1}  # senza scadenza
+
+
+def test_dubbia_niente_ricerca_prezzi(archivio):
+    orig = {"giudizio": "dubbia", "indizi_originale": [], "indizi_falso": []}
+    ai = AIFinta(lettura=lettura(originalita=orig))
+    r = analizza_annuncio(annuncio("10.0 EUR"), FOTO, ai, archivio, OpzioniAnalisi(controllo_prezzo="sempre"))
+    assert r.esito == "visivo_dubbia" and ai.chiamate["prezzi"] == 0 and r.testo_prezzo == ""

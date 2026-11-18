@@ -262,12 +262,14 @@ def prodotto_completo(p: dict | None) -> bool:
 
 
 class AnalistaAI:
-    def __init__(self, api_key: str, modello: str, ricerche_web: int = 3, prezzi: Prezzi | None = None):
+    def __init__(self, api_key: str, modello: str, ricerche_web: int = 2, prezzi: Prezzi | None = None,
+                 ricerche_web_prezzi: int = 2):
         if not api_key:
             raise ValueError("Manca ANTHROPIC_API_KEY nel file .env")
         self.client = ClientClaude(api_key)
         self.modello = modello
         self.ricerche_web = ricerche_web
+        self.ricerche_web_prezzi = ricerche_web_prezzi
         self.prezzi = prezzi or Prezzi()
         self.consumo = Consumo()
 
@@ -383,12 +385,13 @@ class AnalistaAI:
             f"{annuncio.get('taglia') or 'non indicata'}.\n"
             "Cerca annunci e vendite di usate (eBay, Vinted, negozi di maglie vintage come Classic Football "
             "Shirts) e il prezzo da nuova. Considera la stessa versione (replica/authentic) e, se possibile, "
-            "condizioni simili; le taglie da bambino costano meno. Converti in euro. Usa poche ricerche mirate. "
+            "condizioni simili; le taglie da bambino costano meno. Converti in euro. Usa al massimo "
+            f"{self.ricerche_web_prezzi} ricerche mirate (es. una per eBay/Vinted e una per negozi). "
             "Alla fine chiama riporta_prezzi; se non trovi prezzi affidabili lascia i campi a null."
         )
         messaggi: list[dict] = [{"role": "user", "content": richiesta}]
         strumenti = [
-            {"type": "web_search_20250305", "name": "web_search", "max_uses": self.ricerche_web},
+            {"type": "web_search_20250305", "name": "web_search", "max_uses": self.ricerche_web_prezzi},
             TOOL_PREZZI,
         ]
         for tentativo in range(4):

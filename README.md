@@ -134,12 +134,19 @@ La prima chiamata a Claude (quella che legge l'etichetta, senza ricerche web, ~0
   non c'è un codice utilizzabile (niente foto dell'etichetta, codice illeggibile o non trovato online);
 - **stima del prezzo** tipico da usata.
 
-Il **confronto di prezzo** con una ricerca web (eBay, Vinted, negozi vintage) parte solo per le maglie che
-sembrano originali e, con `controllo_prezzo = "occasioni"`, solo se la stima dice che l'annuncio costa meno della
-media. I prezzi trovati restano in cache per `giorni_cache` giorni. Se la maglia ha un codice valido, i prezzi
+Il **confronto di prezzo** con una ricerca web (eBay, Vinted, negozi vintage) parte solo per le maglie con esito
+✅ o 🟢 e, con `controllo_prezzo = "occasioni"`, solo se la stima dice che l'annuncio costa meno della media. I prezzi trovati restano in cache per `giorni_cache` giorni. Se la maglia ha un codice valido, i prezzi
 arrivano già con la ricerca del codice, senza costi in più.
 
 > La valutazione dalle foto è un indizio, non una perizia: un buon falso in foto piccole può passare.
+
+### Spendere meno
+
+- La spesa vera sono le **ricerche web** (1 centesimo l'una più i token delle pagine lette): la prima chiamata
+  senza ricerche costa circa 0,1 centesimi. `ricerche_web_per_codice` e `ricerche_web_per_prezzi` le limitano.
+- `parole_escluse`: annunci con quelle parole nel titolo (felpa, tuta, ...) vengono scartati gratis, senza avviso.
+- I filtri di Vinted (categoria, prezzo massimo, taglia) costano zero: meno annunci nuovi = meno analisi.
+- `budget_giornaliero_usd` è il tetto di sicurezza.
 
 ## Esiti
 

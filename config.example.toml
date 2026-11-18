@@ -20,6 +20,10 @@ eta_massima_annuncio_minuti = 30
 # dell'ultimo visto. Sotto questo margine sono considerati vecchi (1.000.000 di ID ≈ circa un'ora su Vinted)
 margine_id_vecchi = 1000000
 risultati_per_ricerca = 20
+# Annunci con queste parole nel titolo vengono ignorati subito: niente avviso, niente analisi, zero costi.
+# Aggiungi per esempio "bambino" se non ti interessano le taglie da bambino.
+parole_escluse = ["felpa", "tuta", "pantaloni", "pantaloncini", "shorts", "giacca", "giubbotto", "giubbino",
+                  "k-way", "tracksuit", "hoodie", "sweatshirt", "calzettoni", "scarpe", "scarpini", "borsa", "zaino"]
 
 # Le ricerche: filtra su vinted.it dal browser (categoria, marca, taglia, prezzo),
 # poi copia l'URL della pagina e incollalo qui. Ogni ricerca = una richiesta a giro,
@@ -40,13 +44,15 @@ max_foto = 8
 # Con una ricerca generica escono anche 50-80 annunci nuovi all'ora.
 max_analisi_al_giorno = 2000
 budget_giornaliero_usd = 1.0
-# Ricerche web massime per ogni ricerca (codice o prezzi)
-ricerche_web_per_codice = 3
+# Ricerche web massime per ogni chiamata: ogni ricerca costa 1 centesimo, è la voce che pesa di più
+ricerche_web_per_codice = 2
+ricerche_web_per_prezzi = 2
 # Analizza solo le maglie da gara: felpe, maglie da allenamento ecc. vengono scartate subito
 solo_maglie_da_calcio = true
 # Confronto prezzo con ricerca web:
 #   "occasioni" = solo se la stima gratuita dice che costa meno della media (consigliato)
-#   "sempre"    = per ogni maglia che sembra originale (più preciso, costa di più)
+#   "sempre"    = per ogni maglia che ha passato il controllo (più preciso, costa di più)
+# In ogni caso il prezzo si controlla solo per le maglie con esito ✅ o 🟢, mai per dubbie o falsi.
 #   "mai"       = niente confronto
 controllo_prezzo = "occasioni"
 # Dopo quanti giorni rifare la ricerca di un codice o dei prezzi della stessa maglia

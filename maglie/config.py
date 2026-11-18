@@ -31,6 +31,11 @@ class VintedConfig:
     eta_massima_annuncio_minuti: float = 30
     margine_id_vecchi: int = 1_000_000
     risultati_per_ricerca: int = 20
+    # Annunci con queste parole nel titolo vengono ignorati subito: niente avviso e niente analisi (gratis)
+    parole_escluse: list[str] = field(default_factory=lambda: [
+        "felpa", "tuta", "pantaloni", "pantaloncini", "shorts", "giacca", "giubbotto", "giubbino", "k-way",
+        "tracksuit", "hoodie", "sweatshirt", "calzettoni", "scarpe", "scarpini", "borsa", "zaino",
+    ])
 
 
 @dataclass
@@ -38,7 +43,8 @@ class AnalisiConfig:
     modello: str = "claude-haiku-5-5"
     max_foto: int = 8
     max_analisi_al_giorno: int = 2000
-    ricerche_web_per_codice: int = 3
+    ricerche_web_per_codice: int = 2
+    ricerche_web_per_prezzi: int = 2
     # Tetto di spesa giornaliero (dollari): raggiunto questo, le analisi si fermano fino a domani
     budget_giornaliero_usd: float = 1.0
     # Analizza solo le maglie da gara (salta felpe, allenamento, ecc.)

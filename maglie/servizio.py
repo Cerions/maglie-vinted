@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -33,6 +34,15 @@ def eta_minuti(annuncio: dict, ora: float | None = None) -> float | None:
     if ts > 1e12:  # millisecondi
         ts /= 1000
     return ((ora or time.time()) - ts) / 60
+
+
+def parola_esclusa(titolo: str, parole: list[str]) -> str | None:
+    """La prima parola esclusa presente nel titolo (parola intera, maiuscole indifferenti)."""
+    t = (titolo or "").lower()
+    for p in parole:
+        if re.search(rf"(?<![\w-]){re.escape(p.lower())}(?![\w-])", t):
+            return p
+    return None
 
 
 def minuti_da(iso: str | None) -> float | None:
@@ -92,6 +102,11 @@ class Scanner:
         nuovi = sorted((a for a in annunci if a["id"] not in visti), key=lambda a: a["id"])
         in_coda = 0
         for a in nuovi:
+            parola = parola_esclusa(a.get("titolo", ""), v.parole_escluse)
+            if parola:
+                archivio.inserisci_annuncio(a, ricerca.nome, "escluso")
+                log.info("[%s] escluso (\"%s\" nel titolo): %s", ricerca.nome, parola, a["titolo"])
+                continue
             eta = eta_minuti(a)
             vecchio_per_id = max_visto and a["id"] < max_visto - v.margine_id_vecchi
             if vecchio_per_id or (eta is not None and eta > v.eta_massima_annuncio_minuti):
