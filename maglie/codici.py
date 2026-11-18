@@ -15,8 +15,8 @@ FORMATI_STILE: dict[str, list[re.Pattern]] = {
     "nike": [re.compile(r"^[A-Z]{2}\d{4}-\d{3}$"), re.compile(r"^\d{6}-\d{3}$")],
     # adidas: GM4614, H35917, IA7224
     "adidas": [re.compile(r"^[A-Z]{1,2}\d{4,5}$")],
-    # Puma: 763432-01
-    "puma": [re.compile(r"^\d{6}-\d{2}$")],
+    # Puma: 763432-01 (colore a 2 o 3 cifre)
+    "puma": [re.compile(r"^\d{6}-\d{2,3}$")],
 }
 FORMATO_GENERICO = re.compile(r"^[A-Z0-9][A-Z0-9-]{3,14}$")
 
@@ -49,7 +49,7 @@ def normalizza_codice_stile(codice: str | None, marca: str | None) -> CodiceVeri
         return CodiceVerificato(False, c, "codice letto solo in parte")
 
     # Puma a volte è stampato senza separatore: 76343201 -> 763432-01
-    if m == "puma" and re.fullmatch(r"\d{8}", c):
+    if m == "puma" and re.fullmatch(r"\d{8,9}", c):
         c = f"{c[:6]}-{c[6:]}"
     # Nike senza trattino: CV8413101 -> CV8413-101
     if m == "nike" and re.fullmatch(r"[A-Z]{2}\d{7}", c):

@@ -14,6 +14,8 @@ from dataclasses import dataclass
 
 import httpx
 
+from .guida import testo_guida
+
 log = logging.getLogger(__name__)
 
 API_URL = "https://api.anthropic.com/v1/messages"
@@ -154,6 +156,14 @@ TOOL_ETICHETTA = {
             "codice_stile": {"type": ["string", "null"], "description": "Codice articolo come stampato, es. CV8413-101, GM4614, 763432-01. Caratteri incerti: '?'."},
             "upc": {"type": ["string", "null"], "description": "Codice a barre numerico (12-13 cifre) se presente."},
             "taglia_etichetta": {"type": ["string", "null"], "description": "Taglia stampata sull'etichetta dei codici."},
+            "codice_cartellino": {"type": ["string", "null"],
+                                  "description": "Codice prodotto sul cartellino esterno, se c'è una foto del cartellino."},
+            "taglie_coerenti": {"type": ["boolean", "null"],
+                                "description": "La taglia è la stessa su tutte le etichette visibili? Le diciture in più lingue "
+                                               "della stessa taglia (es. L / G) sono coerenti. null se c'è una sola etichetta."},
+            "contatore_produzione": {"type": ["integer", "null"],
+                                     "description": "Numero di serie del contatore di produzione cucito in basso sul davanti "
+                                                    "(Nike, Puma), se leggibile. Solo il numero, senza l'anno."},
             "leggibilita": {"type": "string", "enum": ["buona", "parziale", "scarsa"]},
             "descrizione_maglia": {"type": "string", "description": "Cosa mostrano le foto: stemma, colori, grafica, sponsor, colletto. Solo ciò che si vede."},
             "identificazione": {
@@ -186,7 +196,8 @@ TOOL_ETICHETTA = {
             "note": {"type": "string"},
         },
         "required": ["tipo_articolo", "etichetta_trovata", "leggibilita", "descrizione_maglia", "identificazione",
-                     "originalita", "stima_prezzo_usato_eur"],
+                     "originalita", "stima_prezzo_usato_eur", "codice_cartellino", "taglie_coerenti",
+                     "contatore_produzione"],
     },
 }
 
@@ -312,13 +323,14 @@ class AnalistaAI:
             "colletto), senza dedurre stagione o kit da testi.\n"
             "3) IDENTIFICAZIONE. Se riconosci la maglia dalla grafica, indica squadra, stagione, kit e versione "
             "con la tua confidenza.\n"
-            "4) ORIGINALITÀ. Valuta dalle foto: qualità e tipo di applicazione di stemma, logo e sponsor "
-            "(ricamato/termoadesivo coerente con la versione), font di sponsor e numeri, etichette interne "
-            "(taglia, lavaggio, codici, jock tag) e loro stile per l'epoca, cuciture, tessuto tecnico, colletto. "
-            "probabile_falso solo con indizi concreti (es. stemma storto o sbavato, font sbagliato, etichette "
-            "incoerenti con marca/epoca); se le foto non permettono di giudicare: non_valutabile. Un remake "
-            "retrò ufficiale non è un falso, ma indicalo in versione.\n"
-            "5) PREZZO. Stima a memoria quanto vale di solito questa maglia usata, con queste condizioni e taglia."
+            "4) ORIGINALITÀ. Valuta dalle foto seguendo la guida qui sotto: logo, stemma e sponsor (cuciture, "
+            "simmetria, applicazione coerente con la versione), etichette interne e cartellino, colori e tessuto, "
+            "allineamento, patch, nome e numero. Se vedi il cartellino riporta il suo codice; se vedi il "
+            "contatore di produzione riporta il numero. probabile_falso solo con indizi concreti; se le foto non "
+            "permettono di giudicare: non_valutabile. Un remake retrò ufficiale non è un falso, ma indicalo in "
+            "versione. Negli indizi cita il punto concreto che hai visto (es. 'filo libero nello stemma').\n"
+            "5) PREZZO. Stima a memoria quanto vale di solito questa maglia usata, con queste condizioni e taglia.\n\n"
+            + testo_guida(annuncio.get("marca"))
         )})
         r = self._crea(
             model=self.modello, max_tokens=1800, tools=[TOOL_ETICHETTA],

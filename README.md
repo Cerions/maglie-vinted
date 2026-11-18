@@ -140,6 +140,21 @@ arrivano già con la ricerca del codice, senza costi in più.
 
 > La valutazione dalle foto è un indizio, non una perizia: un buon falso in foto piccole può passare.
 
+### La guida r/KitSwap
+
+La valutazione segue la [guida di r/KitSwap per riconoscere i falsi](https://www.reddit.com/r/KitSwap/wiki/spottingfakes/),
+riassunta in `maglie/guida.py`: regole generali più una scheda per marca (adidas, Nike, Puma, Lotto, Macron, Jako,
+New Balance, Hummel) e consigli per le maglie vecchie. A Claude va solo la scheda della marca dell'annuncio
+(~600 token in più a chiamata). Dalle foto vengono letti anche il codice del cartellino, la coerenza delle taglie
+tra le etichette e il contatore di produzione (Nike/Puma); da questi partono controlli automatici:
+
+- codice del cartellino diverso da quello dell'etichetta interna → mai esito positivo;
+- taglia diversa tra le etichette → mai esito positivo;
+- contatore di produzione sotto 1.000.000 (Nike/Puma) → indizio di falso, segnalato con ✖️.
+
+Le foto di esempio della guida (vero vs falso, su imgur) sono elencate in `ESEMPI` dentro `maglie/guida.py`
+per consultarle a mano. La guida è del 2018 e non ha ancora la sezione Umbro.
+
 ### Spendere meno
 
 - La spesa vera sono le **ricerche web** (1 centesimo l'una più i token delle pagine lette): la prima chiamata
@@ -186,6 +201,7 @@ maglie/servizio.py   scanner e analizzatore (thread), jitter e backoff
 maglie/analisi.py    flusso di analisi di un annuncio + testi dei messaggi
 maglie/ai.py         le tre chiamate a Claude (etichetta, ricerca codice, confronto)
 maglie/codici.py     validazione codici articolo e UPC
+maglie/guida.py      checklist anti-falsi per marca (dalla guida r/KitSwap)
 maglie/db.py         SQLite
 maglie/telegram.py   Bot API
 tests/               test con Vinted, Claude e Telegram finti (pytest)

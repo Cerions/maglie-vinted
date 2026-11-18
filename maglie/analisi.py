@@ -180,13 +180,43 @@ def _aggiungi_prezzo(r: Risultato, annuncio: dict, ai: AnalistaAI, archivio: Arc
     r.giudizio_prezzo, r.testo_prezzo, r.prezzo_tipico = valuta_prezzo(prezzo, prezzi, fonte)
 
 
+def controlli_guida(lettura: dict, marca: str | None, codice_etichetta: str | None) -> tuple[list[str], list[str]]:
+    """Controlli oggettivi della guida r/KitSwap sui dati letti dalle foto.
+
+    Ritorna (indizi_forti, indizi_deboli). Un indizio forte impedisce l'esito positivo.
+    """
+    forti, deboli = [], []
+    cartellino = lettura.get("codice_cartellino")
+    if cartellino and codice_etichetta and "?" not in cartellino:
+        c = normalizza_codice_stile(cartellino, marca)
+        if c.valido and c.codice != codice_etichetta:
+            forti.append(f"codice del cartellino ({c.codice}) diverso da quello dell'etichetta ({codice_etichetta})")
+    if lettura.get("taglie_coerenti") is False:
+        forti.append("taglia diversa tra le etichette")
+    contatore = lettura.get("contatore_produzione")
+    m = (marca or "").lower()
+    if isinstance(contatore, int) and 0 < contatore < 1_000_000 and ("nike" in m or "puma" in m):
+        deboli.append(f"contatore di produzione basso ({contatore:,}".replace(",", ".")
+                      + "): sui falsi è spesso intorno a 500.000")
+    return forti, deboli
+
+
+def _applica_guida(lettura: dict, marca: str | None, codice: str | None) -> list[str]:
+    """Aggiunge gli indizi della guida a quelli visivi. Ritorna gli indizi forti."""
+    forti, deboli = controlli_guida(lettura, marca, codice)
+    if forti or deboli:
+        orig = lettura.setdefault("originalita", {})
+        orig["indizi_falso"] = list(orig.get("indizi_falso") or []) + forti + deboli
+    return forti
+
+
 def _valutazione_visiva(base_esito: str, motivo: str, lettura: dict, declassa: bool = False) -> tuple[str, str]:
     """Senza un codice utilizzabile: l'esito viene dalla valutazione delle foto."""
     orig = lettura.get("originalita") or {}
     esito = GIUDIZIO_VISIVO.get(orig.get("giudizio"))
     if esito is None:
         return base_esito, motivo  # non valutabile dalle foto
-    if declassa and esito == "visivo_originale":
+    if (declassa or lettura.get("_indizi_forti")) and esito == "visivo_originale":
         esito = "visivo_dubbia"
     return esito, motivo
 
@@ -211,11 +241,14 @@ def _analizza_originalita(annuncio: dict, foto: list[tuple[bytes, str]], ai: Ana
         return Risultato("non_maglia", f"sembra {tipo.replace('_', ' ')}", lettura=lettura, foto_analizzate=n)
 
     if not lettura.get("etichetta_trovata"):
+        lettura["_indizi_forti"] = _applica_guida(lettura, lettura.get("marca") or annuncio.get("marca"), None)
         esito, motivo = _valutazione_visiva("nessuna_etichetta", "nessuna foto dell'etichetta con i codici", lettura)
         return Risultato(esito, motivo, lettura=lettura, foto_analizzate=n)
 
     marca = lettura.get("marca") or annuncio.get("marca")
     cs = normalizza_codice_stile(lettura.get("codice_stile"), marca)
+    forti = _applica_guida(lettura, marca, cs.codice if cs.valido else None)
+    lettura["_indizi_forti"] = forti
     up = normalizza_upc(lettura.get("upc"))
     base = dict(codice_stile=cs.codice, upc=up.codice, taglia_etichetta=lettura.get("taglia_etichetta"),
                 lettura=lettura, foto_analizzate=n)
@@ -259,8 +292,11 @@ def _analizza_originalita(annuncio: dict, foto: list[tuple[bytes, str]], ai: Ana
     if prodotto.get("upc_coerente") is False:
         motivo += " Il codice a barre risulta di un altro prodotto."
     esito = verdetto.get("esito", "incerto")
-    # Un codice a barre di un altro prodotto è un campanello d'allarme: niente "corrisponde"
-    if esito == "corrisponde" and (prodotto.get("upc_coerente") is False or verdetto.get("taglia_coerente") is False):
+    if forti:
+        motivo += " Attenzione: " + "; ".join(forti) + "."
+    # Un codice a barre di un altro prodotto o un indizio forte della guida: niente "corrisponde"
+    if esito == "corrisponde" and (prodotto.get("upc_coerente") is False or verdetto.get("taglia_coerente") is False
+                                   or forti):
         esito = "incerto"
     return Risultato(esito, (motivo + nota_upc).strip(), prodotto=prodotto,
                      nota_annuncio=verdetto.get("nota_annuncio") or None, **base)
@@ -318,7 +354,7 @@ def messaggio_esito(r: Risultato, annuncio: dict, con_intestazione_annuncio: boo
         righe.append(f"Sembra: {e(r.nome_identificato)}" + (f" (confidenza {e(confidenza)})" if confidenza else ""))
     if r.motivo:
         righe.append(e(r.motivo))
-    if r.esito.startswith("visivo_"):
+    if r.esito.startswith("visivo_") or r.lettura.get("_indizi_forti"):
         orig = r.lettura.get("originalita") or {}
         for indizio in (orig.get("indizi_originale") or [])[:3]:
             righe.append(f"✔️ {e(indizio)}")
