@@ -1,0 +1,44 @@
+# Copia questo file come config.toml e modificalo.
+# Le chiavi segrete (API Anthropic, bot Telegram) vanno nel file .env, non qui.
+
+[vinted]
+dominio = "https://www.vinted.it"
+# Ogni giro aspetta un tempo casuale tra questi due valori (jitter)
+intervallo_min_secondi = 60
+intervallo_max_secondi = 120
+# Pausa casuale tra una ricerca e l'altra nello stesso giro
+pausa_tra_ricerche_secondi = [3, 8]
+# Backoff: alla prima risposta 403/429 aspetta 5 min, poi 10, 20, 40... fino a 60
+backoff_blocco_minuti = 5
+# Errori di rete (PC offline, timeout): si parte da 1 minuto
+backoff_errore_minuti = 1
+backoff_max_minuti = 60
+# Annunci "nuovi" per lo script ma con la foto caricata da più di N minuti
+# (promossi, o rimasti indietro dopo un riavvio) non generano avvisi
+eta_massima_annuncio_minuti = 30
+risultati_per_ricerca = 20
+
+# Le ricerche: filtra su vinted.it dal browser (categoria, marca, taglia, prezzo),
+# poi copia l'URL della pagina e incollalo qui. Ogni ricerca = una richiesta a giro,
+# quindi meglio poche ricerche ben filtrate che tante.
+[[ricerche]]
+nome = "Maglie calcio"
+url = "https://www.vinted.it/catalog?search_text=maglia%20calcio&order=newest_first"
+
+# [[ricerche]]
+# nome = "Nike retro"
+# url = "https://www.vinted.it/catalog?search_text=maglia%20nike%20vintage&order=newest_first"
+
+[analisi]
+modello = "claude-haiku-5-5"
+# Foto massime inviate al modello per annuncio (più foto = più costo)
+max_foto = 8
+# Tetto di sicurezza sui costi
+max_analisi_al_giorno = 200
+# Ricerche web massime per identificare un codice
+ricerche_web_per_codice = 3
+
+[telegram]
+# true = avviso subito appena esce l'annuncio, poi la risposta con l'esito
+# false = un solo messaggio, a analisi finita
+avviso_immediato = true

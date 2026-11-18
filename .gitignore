@@ -1,0 +1,10 @@
+.env
+config.toml
+*.db
+*.db-wal
+*.db-shm
+logs/
+*.csv
+__pycache__/
+.venv/
+.pytest_cache/

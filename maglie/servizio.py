@@ -1,0 +1,169 @@
+"""I due processi che girano in parallelo.
+
+- Scanner: interroga le ricerche ogni 60-120 s (jitter), con backoff se Vinted blocca.
+  Appena vede un annuncio nuovo manda l'avviso immediato e lo mette in coda.
+- Analizzatore: prende gli annunci dalla coda (nel DB, quindi sopravvive ai riavvii),
+  li analizza e risponde all'avviso con l'esito.
+"""
+
+from __future__ import annotations
+
+import logging
+import random
+import threading
+import time
+
+from .analisi import analizza_annuncio, messaggio_esito, messaggio_nuovo, raccogli_foto
+from .config import Config, Ricerca
+from .db import Archivio
+from .telegram import Telegram, e
+from .vinted import ClientVinted, VintedErrore, parametri_da_ricerca
+
+log = logging.getLogger(__name__)
+
+MAX_TENTATIVI_ANALISI = 3
+
+
+def eta_minuti(annuncio: dict, ora: float | None = None) -> float | None:
+    ts = annuncio.get("timestamp")
+    if not ts:
+        return None
+    ts = float(ts)
+    if ts > 1e12:  # millisecondi
+        ts /= 1000
+    return ((ora or time.time()) - ts) / 60
+
+
+def attesa_backoff(cfg: Config, fallimenti: int, bloccato: bool) -> float:
+    base = cfg.vinted.backoff_blocco_minuti if bloccato else cfg.vinted.backoff_errore_minuti
+    minuti = min(base * 2 ** (fallimenti - 1), cfg.vinted.backoff_max_minuti)
+    return minuti * 60 * random.uniform(0.8, 1.2)
+
+
+class Scanner:
+    def __init__(self, cfg: Config, client: ClientVinted, telegram: Telegram,
+                 stop: threading.Event, sveglia: threading.Event):
+        self.cfg, self.client, self.telegram = cfg, client, telegram
+        self.stop, self.sveglia = stop, sveglia
+        self.fallimenti = 0
+        self._avvisato_blocco = False
+
+    def giro_ricerca(self, archivio: Archivio, ricerca: Ricerca) -> int:
+        """Una richiesta a Vinted per una ricerca. Ritorna quanti annunci nuovi ha messo in coda."""
+        params = parametri_da_ricerca(ricerca.url, self.cfg.vinted.risultati_per_ricerca)
+        annunci = self.client.cerca(params)
+        chiave = ricerca.url
+
+        if not archivio.ricerca_inizializzata(chiave):
+            # Primo giro di questa ricerca: segno tutto come già visto, niente avvisi
+            for a in annunci:
+                archivio.inserisci_annuncio(a, ricerca.nome, "baseline")
+            archivio.segna_ricerca_inizializzata(chiave)
+            log.info("[%s] prima scansione: %d annunci esistenti ignorati, da ora avviso solo i nuovi",
+                     ricerca.nome, len(annunci))
+            return 0
+
+        visti = archivio.ids_gia_visti([a["id"] for a in annunci])
+        nuovi = sorted((a for a in annunci if a["id"] not in visti), key=lambda a: a["id"])
+        in_coda = 0
+        for a in nuovi:
+            eta = eta_minuti(a)
+            if eta is not None and eta > self.cfg.vinted.eta_massima_annuncio_minuti:
+                # annuncio vecchio (promosso o riapparso dopo un riavvio): non è una novità
+                archivio.inserisci_annuncio(a, ricerca.nome, "vecchio")
+                continue
+            if not archivio.inserisci_annuncio(a, ricerca.nome, "in_coda"):
+                continue
+            in_coda += 1
+            log.info("[%s] NUOVO: %s · %s · %s", ricerca.nome, a["titolo"], a["prezzo"], a["url"])
+            if self.cfg.telegram.avviso_immediato:
+                mid = self.telegram.invia(messaggio_nuovo(a, ricerca.nome), foto=a.get("foto_principale") or None)
+                archivio.imposta_tg_message_id(a["id"], mid)
+            self.sveglia.set()
+        return in_coda
+
+    def esegui(self) -> None:
+        archivio = Archivio(self.cfg.percorso_db)
+        v = self.cfg.vinted
+        try:
+            while not self.stop.is_set():
+                try:
+                    for i, ricerca in enumerate(self.cfg.ricerche):
+                        self.giro_ricerca(archivio, ricerca)
+                        if i < len(self.cfg.ricerche) - 1 and self.stop.wait(random.uniform(*v.pausa_tra_ricerche_secondi)):
+                            return
+                    if self.fallimenti:
+                        log.info("Vinted risponde di nuovo dopo %d errori", self.fallimenti)
+                        if self._avvisato_blocco:
+                            self.telegram.invia("🟢 Vinted risponde di nuovo, scansione ripresa.")
+                    self.fallimenti, self._avvisato_blocco = 0, False
+                    attesa = random.uniform(v.intervallo_min_secondi, v.intervallo_max_secondi)
+                except VintedErrore as ex:
+                    self.fallimenti += 1
+                    self.client.nuova_sessione()
+                    attesa = attesa_backoff(self.cfg, self.fallimenti, ex.bloccato)
+                    log.warning("Vinted: %s (errore %d di fila%s). Riprovo tra %.1f min",
+                                ex, self.fallimenti, ", BLOCCO" if ex.bloccato else "", attesa / 60)
+                    if self.fallimenti == 3 and not self._avvisato_blocco:
+                        self._avvisato_blocco = True
+                        self.telegram.invia(
+                            f"🔴 Vinted non risponde da 3 tentativi ({e(ex)}). "
+                            "Continuo a riprovare con attese crescenti.")
+                self.stop.wait(attesa)
+        finally:
+            archivio.chiudi()
+
+
+class Analizzatore:
+    def __init__(self, cfg: Config, client: ClientVinted, ai, telegram: Telegram,
+                 stop: threading.Event, sveglia: threading.Event):
+        self.cfg, self.client, self.ai, self.telegram = cfg, client, ai, telegram
+        self.stop, self.sveglia = stop, sveglia
+
+    def _rispondi(self, riga, testo: str) -> None:
+        self.telegram.invia(testo, in_risposta_a=riga["tg_message_id"])
+
+    def elabora(self, archivio: Archivio, riga) -> None:
+        annuncio = dict(riga)
+        if archivio.analisi_oggi() >= self.cfg.analisi.max_analisi_al_giorno:
+            archivio.segna_saltato(riga["id"], "limite giornaliero di analisi raggiunto")
+            self._rispondi(riga, "⏸ Limite giornaliero di analisi raggiunto: questa non la controllo.")
+            return
+        try:
+            foto = raccogli_foto(self.client, annuncio, self.cfg.analisi.max_foto)
+            risultato = analizza_annuncio(annuncio, foto, self.ai, archivio)
+        except VintedErrore as ex:
+            n = archivio.segna_tentativo_fallito(riga["id"], str(ex), MAX_TENTATIVI_ANALISI)
+            log.warning("Analisi %s: Vinted %s (tentativo %d)", riga["id"], ex, n)
+            if n >= MAX_TENTATIVI_ANALISI:
+                self._rispondi(riga, f"❌ Non riesco ad aprire l'annuncio ({e(ex)}). Controllalo a mano.")
+            self.stop.wait(300 if ex.bloccato else 30)
+            return
+        except Exception as ex:  # errori API, rete, ecc.
+            n = archivio.segna_tentativo_fallito(riga["id"], repr(ex), MAX_TENTATIVI_ANALISI)
+            log.exception("Analisi %s fallita (tentativo %d)", riga["id"], n)
+            if n >= MAX_TENTATIVI_ANALISI:
+                self._rispondi(riga, f"❌ Analisi non riuscita: {e(ex)}")
+            self.stop.wait(30)
+            return
+
+        archivio.salva_esito(
+            riga["id"], risultato.esito, codice_stile=risultato.codice_stile, upc=risultato.upc,
+            taglia_etichetta=risultato.taglia_etichetta, prodotto=risultato.nome_prodotto or None,
+            motivo=risultato.motivo,
+        )
+        log.info("Esito %s: %s %s %s", riga["id"], risultato.esito, risultato.codice_stile or "", risultato.motivo)
+        self._rispondi(riga, messaggio_esito(risultato, annuncio, con_intestazione_annuncio=not riga["tg_message_id"]))
+
+    def esegui(self) -> None:
+        archivio = Archivio(self.cfg.percorso_db)
+        try:
+            while not self.stop.is_set():
+                riga = archivio.prossimo_in_coda()
+                if riga is None:
+                    self.sveglia.wait(30)
+                    self.sveglia.clear()
+                    continue
+                self.elabora(archivio, riga)
+        finally:
+            archivio.chiudi()
