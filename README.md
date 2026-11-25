@@ -5,6 +5,8 @@ subito su Telegram, poi cerca la foto dell'etichetta interna, legge il codice ar
 codice a barre, verifica online a quale maglia corrispondono e ti risponde con l'esito.
 Le maglie che superano il controllo finiscono in una lista.
 
+📐 **Come è fatto dentro** (architettura, scelte tecniche, test): [COME_FUNZIONA.md](COME_FUNZIONA.md)
+
 > ⚠️ "Etichetta OK" vuol dire che il codice è coerente con la maglia dell'annuncio, **non** che
 > la maglia è originale: i falsi possono avere codici veri. È un filtro, non una certificazione.
 
@@ -94,9 +96,8 @@ python main.py prova-annuncio https://www.vinted.it/items/... --ai   # analisi c
 python main.py avvia                                # si parte (Ctrl+C per fermare)
 ```
 
-`prova-annuncio` è importante: la lettura delle foto dalla pagina dell'annuncio non l'ho potuta
-provare sul sito vero. Se in output vedi foto di altri annunci, o nessuna foto, la funzione da
-sistemare è `estrai_foto_da_pagina` in `maglie/vinted.py`.
+Se `prova-annuncio` mostra foto di altri annunci, o nessuna foto, la funzione da sistemare è
+`estrai_foto_da_pagina` in `maglie/vinted.py`.
 
 Con `-v` (`python main.py -v avvia`) il log diventa dettagliato, comprese le richieste HTTP.
 
