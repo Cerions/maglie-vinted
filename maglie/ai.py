@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from .codici import COLORI_BASE
 from .guida import testo_guida
 
 log = logging.getLogger(__name__)
@@ -166,6 +167,11 @@ TOOL_ETICHETTA = {
                                                     "(Nike, Puma), se leggibile. Solo il numero, senza l'anno."},
             "leggibilita": {"type": "string", "enum": ["buona", "parziale", "scarsa"]},
             "descrizione_maglia": {"type": "string", "description": "Cosa mostrano le foto: stemma, colori, grafica, sponsor, colletto. Solo ciò che si vede."},
+            "colori_base": {"type": "array", "items": {"type": "string", "enum": COLORI_BASE}, "maxItems": 2,
+                            "description": "Colore di fondo del corpo della maglia, come si vede nelle foto (non fasce, "
+                                           "bordi, sponsor o dettagli). Due colori solo per righe/metà di due colori "
+                                           "che coprono il corpo (es. nerazzurra: blu, nero). blu_scuro = navy. "
+                                           "multicolore se non c'è un colore dominante. Vuoto se non si capisce."},
             "identificazione": {
                 "type": ["object", "null"],
                 "description": "Quale maglia è secondo te, riconoscendola dalla grafica (null se non la riconosci).",
@@ -195,7 +201,8 @@ TOOL_ETICHETTA = {
             },
             "note": {"type": "string"},
         },
-        "required": ["tipo_articolo", "etichetta_trovata", "leggibilita", "descrizione_maglia", "identificazione",
+        "required": ["tipo_articolo", "etichetta_trovata", "leggibilita", "descrizione_maglia", "colori_base",
+                     "identificazione",
                      "originalita", "stima_prezzo_usato_eur", "codice_cartellino", "taglie_coerenti",
                      "contatore_produzione"],
     },
@@ -320,7 +327,8 @@ class AnalistaAI:
             "carattere per carattere; se un carattere è incerto scrivi '?' al suo posto (es. CV84?3-101), "
             "non inventarlo. Non confondere l'etichetta di composizione/lavaggio con quella dei codici.\n"
             "2) DESCRIZIONE. Descrivi la maglia SOLO in base a ciò che vedi (stemma, colori, grafica, sponsor, "
-            "colletto), senza dedurre stagione o kit da testi.\n"
+            "colletto), senza dedurre stagione o kit da testi. In colori_base indica il colore di fondo del corpo "
+            "della maglia guardando le foto, non il nome del kit o il codice.\n"
             "3) IDENTIFICAZIONE. Se riconosci la maglia dalla grafica, indica squadra, stagione, kit e versione "
             "con la tua confidenza.\n"
             "4) ORIGINALITÀ. Valuta dalle foto seguendo la guida qui sotto: logo, stemma e sponsor (cuciture, "

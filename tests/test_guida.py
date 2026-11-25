@@ -79,3 +79,67 @@ def test_la_guida_della_marca_finisce_nel_prompt():
     assert "Specifico per puma" in testo and "numero di produzione" in testo.lower()
     schema = ai.client.messages.chiamate[0]["tools"][0]["input_schema"]
     assert {"codice_cartellino", "taglie_coerenti", "contatore_produzione"} <= set(schema["required"])
+
+
+# --- colore nel codice Nike ---------------------------------------------------
+
+from maglie.codici import colore_codice_nike, incoerenza_colore_nike  # noqa: E402
+
+
+def test_colore_codice_nike():
+    assert colore_codice_nike("DM1840-452") == ("452", "4")
+    assert colore_codice_nike("dm1840 452") == ("452", "4")
+    assert colore_codice_nike("DM1840452") == ("452", "4")       # senza trattino
+    assert colore_codice_nike("DM18?0-452") == ("452", "4")      # modello letto in parte, colore leggibile
+    assert colore_codice_nike("776929-100") == ("100", "1")      # formato vecchio
+    assert colore_codice_nike("CV8413-1?1") is None              # colore illeggibile
+    assert colore_codice_nike("DX2688-910") is None              # 9xx multicolore: non si controlla
+    assert colore_codice_nike(None) is None
+
+
+def test_incoerenza_colore_nike():
+    # il caso vero: codice del Barcellona home 22/23 (blu) su una Inter away 23/24 bianca
+    testo = incoerenza_colore_nike("DM1840-452", "Nike", ["bianco"])
+    assert testo and "-452" in testo and "blu" in testo and "bianco" in testo
+    # coerenti
+    assert incoerenza_colore_nike("DX2688-101", "Nike", ["bianco"]) is None       # Inter away vera
+    assert incoerenza_colore_nike("DX2763-409", "Nike", ["blu", "nero"]) is None  # Inter home nerazzurra
+    assert incoerenza_colore_nike("DM1840-452", "Nike", ["blu_scuro"]) is None    # navy è blu
+    # non si segnala quando non si può giudicare
+    assert incoerenza_colore_nike("DM1840-452", "Nike", ["multicolore"]) is None
+    assert incoerenza_colore_nike("DM1840-452", "Nike", []) is None
+    assert incoerenza_colore_nike("DM1840-452", "Nike", ["fucsia acceso"]) is None  # colore fuori elenco
+    assert incoerenza_colore_nike("763432-01", "Puma", ["rosso"]) is None          # solo Nike
+    assert incoerenza_colore_nike("GM4614", "adidas", ["bianco"]) is None
+
+
+def test_colore_sbagliato_blocca_esito_positivo(archivio):
+    # la ricerca dice che il codice è giusto, ma il colore del codice non torna con le foto
+    ai = AIFinta(lettura=lettura(etichetta_trovata=True, codice_stile="DM1840-452", upc="195867304108",
+                                 indice_foto=3, colori_base=["bianco"]))
+    r = analizza_annuncio(annuncio(), FOTO, ai, archivio)
+    assert r.esito == "incerto" and "-452" in r.motivo
+    assert "✖️ il codice finisce con -452" in messaggio_esito(r, annuncio(), False)
+
+
+def test_colore_sbagliato_anche_se_il_codice_non_si_trova_online(archivio):
+    # senza ricerca utile la valutazione visiva da sola direbbe "probabile originale"
+    ai = AIFinta(lettura=lettura(etichetta_trovata=True, codice_stile="DM1840-452", indice_foto=3,
+                                 colori_base=["bianco"]),
+                 prodotto={"trovato": False, "fonti": []})
+    r = analizza_annuncio(annuncio(), FOTO, ai, archivio)
+    assert r.esito == "visivo_dubbia"
+
+
+def test_colore_coerente_non_cambia_nulla(archivio):
+    ai = AIFinta(lettura=lettura(etichetta_trovata=True, codice_stile="DX2688-101", upc="194502132830",
+                                 indice_foto=3, colori_base=["bianco"]))
+    assert analizza_annuncio(annuncio(), FOTO, ai, archivio).esito == "corrisponde"
+
+
+def test_schema_chiede_colori_base():
+    from maglie.ai import TOOL_ETICHETTA
+
+    schema = TOOL_ETICHETTA["input_schema"]
+    assert "colori_base" in schema["required"]
+    assert "bianco" in schema["properties"]["colori_base"]["items"]["enum"]

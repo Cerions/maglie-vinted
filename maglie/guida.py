@@ -37,6 +37,7 @@ MARCHE = {
 - Etichette sul fianco sinistro in basso: l'ultima ha il codice prodotto. Nei falsi quasi sempre è un codice
   generico riusato che non corrisponde alla maglia (ma i falsi migliori copiano anche il codice giusto).
 - Codice: 6 cifre o 2 lettere + 4 cifre, poi 3 cifre di colore (es. 776929-100, CV8413-101). Interno = cartellino.
+  La prima cifra del colore è la famiglia (0 nero/grigio, 1 bianco, 4 blu, 6 rosso...): deve tornare con la maglia.
 - Cuciture: il controllo qualità Nike è ottimo; fili liberi o lettere deformate nello stemma = falso.
 - Colori più pallidi del normale = sospetto.
 - Contatore di produzione in basso a destra (numero di serie + anno): sui veri di solito supera 1.000.000,

@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass, field
 
 from .ai import AnalistaAI, prodotto_completo
-from .codici import normalizza_codice_stile, normalizza_upc
+from .codici import incoerenza_colore_nike, normalizza_codice_stile, normalizza_upc
 from .db import Archivio
 from .telegram import e
 from .vinted import ClientVinted, estrai_descrizione, estrai_foto_da_pagina
@@ -193,6 +193,12 @@ def controlli_guida(lettura: dict, marca: str | None, codice_etichetta: str | No
             forti.append(f"codice del cartellino ({c.codice}) diverso da quello dell'etichetta ({codice_etichetta})")
     if lettura.get("taglie_coerenti") is False:
         forti.append("taglia diversa tra le etichette")
+    # colore nel codice Nike: si guarda il codice come letto (anche in parte), altrimenti quello del cartellino
+    for codice in (lettura.get("codice_stile"), cartellino):
+        colore = incoerenza_colore_nike(codice, marca, lettura.get("colori_base"))
+        if colore:
+            forti.append(colore)
+            break
     contatore = lettura.get("contatore_produzione")
     m = (marca or "").lower()
     if isinstance(contatore, int) and 0 < contatore < 1_000_000 and ("nike" in m or "puma" in m):

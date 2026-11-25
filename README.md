@@ -150,6 +150,9 @@ tra le etichette e il contatore di produzione (Nike/Puma); da questi partono con
 
 - codice del cartellino diverso da quello dell'etichetta interna → mai esito positivo;
 - taglia diversa tra le etichette → mai esito positivo;
+- Nike: la prima delle 3 cifre di colore del codice (1xx bianco, 4xx blu, 6xx rosso...) non torna con il colore
+  base della maglia nelle foto → mai esito positivo. Funziona anche se il codice non si trova online o è letto
+  solo in parte (basta il colore). Es. DM1840-452 (Barcellona home 22/23, blu) su una Inter away bianca;
 - contatore di produzione sotto 1.000.000 (Nike/Puma) → indizio di falso, segnalato con ✖️.
 
 Le foto di esempio della guida (vero vs falso, su imgur) sono elencate in `ESEMPI` dentro `maglie/guida.py`

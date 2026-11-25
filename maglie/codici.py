@@ -85,3 +85,61 @@ def normalizza_upc(upc: str | None) -> CodiceVerificato:
     if not gtin_valido(c):
         return CodiceVerificato(False, c, "cifra di controllo UPC sbagliata (lettura errata o etichetta falsa)")
     return CodiceVerificato(True, c)
+
+
+# --- colore nel codice Nike ---------------------------------------------------
+# Nei codici Nike le 3 cifre finali sono il colore e la prima indica la famiglia (CV8413-101 = bianco,
+# DX2763-409 = blu). Un falso che riusa il codice di un'altra maglia spesso ha la famiglia sbagliata:
+# es. DM1840-452 (Barcellona home, blu) cucito su una Inter away bianca.
+# Gli insiemi sono larghi apposta: meglio non segnalare un caso dubbio che segnalare un originale.
+COLORI_BASE = ["nero", "grigio", "bianco", "beige", "marrone", "oro", "giallo", "arancione", "rosso", "bordeaux",
+               "rosa", "viola", "verde", "verde_acqua", "azzurro", "blu", "blu_scuro", "multicolore"]
+
+FAMIGLIE_COLORE_NIKE: dict[str, tuple[str, set[str]]] = {
+    "0": ("nero/grigio", {"nero", "grigio"}),
+    "1": ("bianco", {"bianco", "beige", "grigio"}),
+    "2": ("marrone/beige", {"marrone", "beige", "oro"}),
+    "3": ("verde", {"verde", "verde_acqua"}),
+    "4": ("blu", {"blu", "blu_scuro", "azzurro", "verde_acqua"}),
+    "5": ("viola", {"viola", "bordeaux"}),
+    "6": ("rosso/rosa", {"rosso", "bordeaux", "rosa", "arancione"}),
+    "7": ("giallo/oro", {"giallo", "oro", "arancione"}),
+    "8": ("arancione", {"arancione"}),
+    # "9" = multicolore: non si controlla
+}
+
+
+def colore_codice_nike(codice: str | None) -> tuple[str, str] | None:
+    """(suffisso colore, famiglia) di un codice Nike, anche se letto solo in parte (DM18?0-452).
+
+    None se il suffisso non è leggibile o la famiglia non è controllabile.
+    """
+    if not codice:
+        return None
+    c = re.sub(r"[‐‑‒–—_ ]", "-", codice.upper().strip())
+    m = re.search(r"(?:^|[A-Z0-9?])-(\d{3})$", c) or re.fullmatch(r"[A-Z]{2}\d{4}(\d{3})", c)
+    if not m:
+        return None
+    suffisso = m.group(1)
+    if suffisso[0] not in FAMIGLIE_COLORE_NIKE:
+        return None
+    return suffisso, suffisso[0]
+
+
+def incoerenza_colore_nike(codice: str | None, marca: str | None, colori_maglia: list | None) -> str | None:
+    """Testo dell'indizio se la famiglia di colore del codice non c'entra con il colore base della maglia."""
+    if marca_normalizzata(marca) != "nike" or not colori_maglia:
+        return None
+    colori = [str(x).strip().lower().replace(" ", "_") for x in colori_maglia if x]
+    if not colori or "multicolore" in colori or any(x not in COLORI_BASE for x in colori):
+        return None
+    cc = colore_codice_nike(codice)
+    if cc is None:
+        return None
+    suffisso, cifra = cc
+    nome, ammessi = FAMIGLIE_COLORE_NIKE[cifra]
+    if ammessi & set(colori):
+        return None
+    visti = " e ".join(x.replace("_", " ") for x in colori)
+    return (f"il codice finisce con -{suffisso} (colore {nome}) ma il colore base della maglia è {visti}: "
+            "probabile codice di un'altra maglia")
